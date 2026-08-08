@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="description" content="Hoshiza: a GitHub repo triage board and status map." />
+		<meta name="theme-color" content="#ffffff" />
+		<script>
+			// Apply the saved/system theme before first paint so there is no flash.
+			// Light is the default scene; dark only when the system asks for it.
+			(function () {
+				try {
+					var t = localStorage.getItem('hoshiza_theme');
+					var dark =
+						t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches);
+					document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+				} catch (e) {
+					document.documentElement.dataset.theme = 'light';
+				}
+			})();
+		</script>
+		<link href="/Hoshiza/_app/immutable/entry/start.DmYU0wbP.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/DYUXVP_i.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/CVan8OKl.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/entry/app.BTeM8KZA.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/xihTtKlq.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/nodes/0.CMmL6qtj.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/CHNKHhnF.js" rel="modulepreload">
+		
+		<link href="/Hoshiza/_app/immutable/assets/0.B56jSSJa.css" rel="stylesheet">
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">
+			<script>
+				{
+					__sveltekit_12v5x1b = {
+						base: "/Hoshiza",
+						assets: "/Hoshiza"
+					};
+
+					const element = document.currentScript.parentElement;
+
+					Promise.all([
+						import("/Hoshiza/_app/immutable/entry/start.DmYU0wbP.js"),
+						import("/Hoshiza/_app/immutable/entry/app.BTeM8KZA.js")
+					]).then(([kit, app]) => {
+						kit.start(app, element);
+					});
+				}
+			</script>
+		</div>
+	</body>
+</html>

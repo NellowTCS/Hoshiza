@@ -1,12 +1,23 @@
 {
   "app": "Hoshiza",
   "mode": "version",
-  "latest": "0.1.0",
+  "latest": "1.0.0",
   "files": [
+    "404.html",
+    "_app/immutable/assets/0.B56jSSJa.css",
+    "_app/immutable/assets/2.BT5wxtwI.css",
+    "_app/immutable/chunks/Bjy-W4x2.js",
+    "_app/immutable/chunks/CHNKHhnF.js",
+    "_app/immutable/chunks/CVan8OKl.js",
+    "_app/immutable/chunks/DYUXVP_i.js",
+    "_app/immutable/chunks/xihTtKlq.js",
+    "_app/immutable/entry/app.BTeM8KZA.js",
+    "_app/immutable/entry/start.DmYU0wbP.js",
+    "_app/immutable/nodes/0.CMmL6qtj.js",
+    "_app/immutable/nodes/1.26_yOkTD.js",
+    "_app/immutable/nodes/2.DLXbpqSb.js",
+    "_app/version.json",
     "apple-touch-icon-180x180.png",
-    "assets/index-FOi4kX9Q.css",
-    "assets/index-bvylKMQf.js",
-    "assets/index-bvylKMQf.js.map",
     "favicon.ico",
     "favicon.png",
     "index.html",
@@ -16,13 +27,9 @@
     "pwa-512x512.png",
     "pwa-64x64.png",
     "registerSW.js",
+    "robots.txt",
     "sw.js",
-    "sw.js.map",
-    "workbox-57884417.js",
-    "workbox-57884417.js.map"
+    "workbox-9c191d2f.js"
   ],
-  "modules": [
-    "assets/index-bvylKMQf.js"
-  ],
-  "timestamp": 1786163327
+  "timestamp": 1786173650
 }
