@@ -1,5 +1,3 @@
-import pkg from '../../package.json';
-
 /**
  * Public build-time configuration. Both values are baked in by Vite from
  * PUBLIC_WORKER_URL / PUBLIC_APP_URL (see .env.example and the Pages workflow).
@@ -17,8 +15,11 @@ export const APP_URL = (import.meta.env.PUBLIC_APP_URL ?? 'https://nellowtcs.me/
 /** The app cannot talk to GitHub until a Worker origin is configured. */
 export const isConfigured = WORKER_URL.length > 0;
 
-/** App version, shared with the updato CDN manifest. */
-export const VERSION = pkg.version;
+/**
+ * Commit SHA this build was produced from, baked in by the updato workflow as
+ * PUBLIC_COMMIT_SHA.
+ */
+export const COMMIT_SHA = import.meta.env.PUBLIC_COMMIT_SHA ?? 'dev';
 
 /**
  * OAuth scopes the app requests at login. `repo` is required, not optional: a

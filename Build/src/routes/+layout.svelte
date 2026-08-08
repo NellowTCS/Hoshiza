@@ -4,20 +4,23 @@
 	import { onMount } from 'svelte';
 	import { Updato } from '@nellowtcs/updato';
 	import { UpdateNotification } from '@nellowtcs/updato/update-ui';
-	import { VERSION } from '$lib/config';
+	import { COMMIT_SHA } from '$lib/config';
 	import '../app.css';
 
 	let { children } = $props();
 
 	onMount(() => {
 		if (!browser) return;
-		// Self-update via the updato CDN (see .github/workflows/updato.yml).
+		// Self-update via the updato CDN, keyed by commit SHA so any push to
+		// main ships an update (see .github/workflows/updato.yml).
 		try {
 			const updater = Updato.init(
-				{ repo: 'NellowTCS/Hoshiza', mode: 'version', current: VERSION },
+				{ repo: 'NellowTCS/Hoshiza', mode: 'commit', current: COMMIT_SHA },
 				{
 					onUpdate: (info) => {
-						new UpdateNotification(updater, { heading: `v${info.latest} ready` }).show(info);
+						new UpdateNotification(updater, { heading: `${info.latest.slice(0, 7)} ready` }).show(
+							info
+						);
 					},
 					onError: (err) => console.warn('Updato:', err.message),
 					onProgress: (pct, file) => console.log(`Updato: ${pct}% - ${file}`)

@@ -8,10 +8,12 @@
 // cross-site fetch() calls. Over http (wrangler dev) the cookies drop to
 // SameSite=Lax without Secure so browsers store them on plain localhost.
 
-interface Env {
+export interface Env {
 	GITHUB_CLIENT_ID?: string;
 	GITHUB_CLIENT_SECRET?: string;
 	APP_URL?: string;
+	/** Extra comma-separated origins allowed to make credentialed calls (optional). */
+	APP_ORIGINS?: string;
 }
 
 const GH = 'https://github.com';
@@ -122,6 +124,8 @@ export default {
 			return json({ error: 'method not allowed' }, 405, cors);
 			if (!path.startsWith('/') || path.startsWith('//') || path.length > PATH_MAX_LENGTH)
 				return json({ error: 'bad path' }, 400, cors);
+			if (!isAllowedPath(path, req.method))
+				return json({ error: 'path not allowed' }, 403, cors);
 
 			const target = path.startsWith('/graphql') ? API + '/graphql' : API + path;
 			const headers: Record<string, string> = {
@@ -170,26 +174,31 @@ export default {
 	}
 } satisfies ExportedHandler<Env>;
 
-function appUrl(env: Env): string {
+export function appUrl(env: Env): string {
 	return (env.APP_URL ?? DEFAULT_APP_URL).replace(/\/+$/, '');
-}
-
-/**
+}/**
  * CORS for the app origins. The app lives on a different origin than the worker
- * (custom domain / GitHub Pages vs. *.workers.dev), so any https origin is
- * echoed. SameSite=Lax/None cookies are still only attached to the worker, so a
- * foreign site cannot read the session.
+ * (custom domain / GitHub Pages vs. *.workers.dev), and the session cookie is
+ * SameSite=None, so CORS is the only thing stopping a foreign site from driving
+ * the proxy with a logged-in user's cookie. Never echo an origin that is not
+ * the app or a configured dev/staging origin.
  */
-function corsHeaders(req: Request, env: Env): Record<string, string> {
+export function corsHeaders(req: Request, env: Env): Record<string, string> {
 	const origin = req.headers.get('Origin');
-	const appUrl_ = appUrl(env);
-	const allowed = new Set([
-		appUrl_,
-		'http://localhost:5173',
-		'http://localhost:4173'
-	]);
-	let allowOrigin = appUrl_;
-	if (origin && (allowed.has(origin) || origin.startsWith('https://'))) allowOrigin = origin;
+	const allowed = new Set(['http://localhost:5173', 'http://localhost:4173']);
+	try {
+		// Origin headers carry scheme+host+port only, never a path.
+		allowed.add(new URL(appUrl(env)).origin);
+	} catch {
+		// Unparseable APP_URL falls through to the dev origins above.
+	}
+	for (const o of (env.APP_ORIGINS ?? '').split(',')) {
+		const t = o.trim().replace(/\/+$/, '');
+		if (t) allowed.add(t);
+	}
+	// Disallowed or absent origins get the app URL, which never matches a
+	// foreign Origin header, so the browser still blocks credentialed reads.
+	const allowOrigin = origin && allowed.has(origin) ? origin : appUrl(env);
 	return {
 		'Access-Control-Allow-Origin': allowOrigin,
 		'Access-Control-Allow-Credentials': 'true',
@@ -198,12 +207,30 @@ function corsHeaders(req: Request, env: Env): Record<string, string> {
 }
 
 /** Path-only redirect target, no protocol-relative URLs, capped length. */
-function sanitizeNext(next: string | null): string {
+export function sanitizeNext(next: string | null): string {
 	if (!next || !next.startsWith('/') || next.startsWith('//') || next.length > 200) return '/';
 	return next;
 }
 
-function sanitizeScope(scope: string | null): string {
+/**
+ * Allow-list for proxied GitHub API paths. The app only reads identity/org/repo
+ * state, fetches GraphQL, and writes the one state file in the data repo; a
+ * token with `repo` scope can do far more, so keep the proxy surface to exactly
+ * what the client needs.
+ */
+export function isAllowedPath(path: string, method: string): boolean {
+	if (method === 'PUT') {
+		// The single write surface: the data repo's state file.
+		return /^\/repos\/[^/]+\/[^/]+\/contents\/[^/]+$/.test(path);
+	}
+	if (method === 'POST') {
+		return path === '/graphql' || path === '/user/repos';
+	}
+	if (method !== 'GET') return false;
+	return /^\/user(?:\/|$)/.test(path) || /^\/repos\//.test(path);
+}
+
+export function sanitizeScope(scope: string | null): string {
 	if (!scope) return 'read:user public_repo read:org';
 	return scope.slice(0, SCOPE_MAX_LENGTH);
 }
@@ -213,7 +240,7 @@ function sanitizeScope(scope: string | null): string {
  * return URL. Only https origins and http://localhost are accepted; anything
  * else falls back to the app URL.
  */
-function sanitizeReturn(base: string, path: string, fallback: string): string {
+export function sanitizeReturn(base: string, path: string, fallback: string): string {
 	const b = base.replace(/\/+$/, '');
 	if (!b) return fallback + '/';
 	const raw = b + (path ? (path.startsWith('/') ? path : '/' + path) : '');
@@ -241,7 +268,7 @@ function cookie(name: string, value: string, maxAge: number, secure: boolean): s
 	return parts.join('; ');
 }
 
-function parseCookies(h: string | null): Record<string, string> {
+export function parseCookies(h: string | null): Record<string, string> {
 	const out: Record<string, string> = {};
 	for (const c of (h ?? '').split(';')) {
 		const [k, ...v] = c.trim().split('=');

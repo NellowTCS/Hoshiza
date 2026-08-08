@@ -24,18 +24,14 @@ jobs:
           if [ -n "${{ secrets.PUBLIC_APP_URL }}" ]; then
             echo "PUBLIC_APP_URL=${{ secrets.PUBLIC_APP_URL }}" >> .env
           fi
+          echo "PUBLIC_COMMIT_SHA=${{ github.sha }}" >> .env
 
       - name: Build
         working-directory: Build
         run: npm ci && npm run build
 
-      - name: Read version
-        id: version
-        run: echo "version=$(node -p "require('./Build/package.json').version")" >> "$GITHUB_OUTPUT"
-
       - uses: NellowTCS/updato@1.0.3
         with:
-          mode: version
+          mode: commit
           dist_dir: Build/build
-          version: ${{ steps.version.outputs.version }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
