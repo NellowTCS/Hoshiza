@@ -1,0 +1,165 @@
+<script lang="ts">
+	import { store, session, sync, pushToGitHub, pullFromGitHub, disableGithubSync } from '$lib/state.svelte';
+	import { login } from '$lib/api';
+	import { WRITE_SCOPES } from '$lib/config';
+	import { DATA_REPO } from '$lib/state.svelte';
+	import { CloudUpload, CloudDownload, Loader2, X } from 'lucide-svelte';
+
+	let busy = $state(false);
+	let msg = $state('');
+	let err = $state('');
+
+	const dataRepoUrl = $derived(
+		session.viewer ? `https://github.com/${session.viewer.login}/${DATA_REPO}` : null
+	);
+
+	const lastSyncedLabel = $derived(
+		sync.lastSyncedAt
+			? new Date(sync.lastSyncedAt).toLocaleTimeString(undefined, {
+					hour: '2-digit',
+					minute: '2-digit',
+					second: '2-digit'
+				})
+			: 'never'
+	);
+
+	async function run(fn: () => Promise<void>, done: string): Promise<void> {
+		busy = true;
+		msg = '';
+		err = '';
+		try {
+			await fn();
+			msg = done;
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			busy = false;
+		}
+	}
+
+	function enable(): void {
+		// Re-auth with write scope; `next=/?sync=1` makes the page kick off sync on return.
+		login(WRITE_SCOPES, '/?sync=1');
+	}
+</script>
+
+<div class="sync">
+	{#if store.storageMode === 'github'}
+		<p class="mode">
+			<span class="pill on">synced</span>
+			State lives in
+			{#if dataRepoUrl}
+				<a href={dataRepoUrl} target="_blank" rel="noreferrer">{session.viewer?.login}/{DATA_REPO}</a>
+			{/if}
+			and in this browser.
+		</p>
+		<p class="autosync">
+			Auto-sync is on: every change is pushed within seconds, once your edits settle.
+			<span class="last">Last synced {lastSyncedLabel}</span>
+		</p>
+		<div class="row">
+			<button onclick={() => run(() => pushToGitHub(), 'Pushed.')} disabled={busy}>
+				<CloudUpload size={14} /> Push now
+			</button>
+			<button onclick={() => run(() => pullFromGitHub(), 'Pulled.')} disabled={busy}>
+				<CloudDownload size={14} /> Pull now
+			</button>
+			<button class="danger" onclick={disableGithubSync} disabled={busy}>
+				<X size={14} /> Disable sync
+			</button>
+		</div>
+		{#if sync.status === 'syncing'}
+			<p class="ok">
+				<Loader2 class="spin" size={14} /> Syncing…
+			</p>
+		{/if}
+		{#if sync.error}
+			<p class="bad">Last auto-sync failed: {sync.error}</p>
+		{/if}
+	{:else}
+		<p class="mode">
+			<span class="pill">local</span>
+			State is stored in this browser only.
+		</p>
+		<p>
+			Enabling sync creates a private <code>{DATA_REPO}</code> repo on your account and pushes
+			your board there. This needs a one-time GitHub authorization with write access.
+		</p>
+		<button class="primary" onclick={enable}>Enable GitHub sync</button>
+	{/if}
+
+	{#if msg}
+		<p class="ok">{msg}</p>
+	{/if}
+	{#if err}
+		<p class="bad">{err}</p>
+	{/if}
+</div>
+
+<style>
+	.sync {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.mode {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin: 0;
+		color: var(--text-dim);
+	}
+	.autosync {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin: 0;
+		color: var(--text-dim);
+		font-size: 12.5px;
+	}
+	.autosync .last {
+		color: var(--text-dim);
+		font-size: 11.5px;
+	}
+	.pill {
+		padding: 2px 8px;
+		border-radius: var(--radius);
+		font-size: 11px;
+		font-weight: 500;
+		background: var(--bg-subtle);
+		border: 1px solid var(--border);
+		color: var(--text-dim);
+	}
+	.pill.on {
+		color: var(--ok);
+		border-color: var(--ok);
+		background: transparent;
+	}
+	.row {
+		display: flex;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+	.row button {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+	code {
+		background: var(--panel-2);
+		padding: 1px 5px;
+		border-radius: 4px;
+	}
+	.ok {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		color: var(--ok);
+		margin: 0;
+	}
+	.bad {
+		color: var(--danger);
+		margin: 0;
+	}
+</style>

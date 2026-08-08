@@ -1,17 +1,16 @@
-# Simple workflow for deploying static content to GitHub Pages
-name: Deploy browser build to GitHub Pages
+# Deploy the SvelteKit static build to GitHub Pages.
+name: Deploy to GitHub Pages
 
 on:
   push:
     branches: ["main"]
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 permissions:
   contents: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
   group: "pages"
   cancel-in-progress: false
@@ -26,18 +25,32 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
+
+      - name: Inject build-time config from repo secrets
+        working-directory: Build
+        run: |
+          if [ -n "${{ secrets.PUBLIC_WORKER_URL }}" ]; then
+            echo "PUBLIC_WORKER_URL=${{ secrets.PUBLIC_WORKER_URL }}" >> .env
+          fi
+          if [ -n "${{ secrets.PUBLIC_APP_URL }}" ]; then
+            echo "PUBLIC_APP_URL=${{ secrets.PUBLIC_APP_URL }}" >> .env
+          fi
 
       - name: Install dependencies
         working-directory: Build
-        run: npm i
+        run: npm ci
+
+      - name: Type check
+        working-directory: Build
+        run: npm run check
 
       - name: Build
         working-directory: Build
         run: npm run build
 
-      - name: Deploy browser build to GitHub Pages
+      - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: Build/dist
+          publish_dir: Build/build

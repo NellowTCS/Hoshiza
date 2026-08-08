@@ -1,0 +1,10 @@
+name = "hoshiza"
+main = "src/worker.ts"
+compatibility_date = "2026-01-01"
+
+# Runtime vars. The client id is public (from the GitHub OAuth app settings page);
+# the client secret is a deploy secret. APP_URL is optional and falls back to
+# https://nellowtcs.github.io/Hoshiza in the worker.
+#
+#   npx wrangler secret put GITHUB_CLIENT_SECRET
+#   npx wrangler deploy --var GITHUB_CLIENT_ID:Iv1_xxxxxxxxxxxx --var APP_URL:https://example.com

@@ -13,7 +13,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+
+      - name: Inject build-time config from repo secrets
+        working-directory: Build
+        run: |
+          if [ -n "${{ secrets.PUBLIC_WORKER_URL }}" ]; then
+            echo "PUBLIC_WORKER_URL=${{ secrets.PUBLIC_WORKER_URL }}" >> .env
+          fi
+          if [ -n "${{ secrets.PUBLIC_APP_URL }}" ]; then
+            echo "PUBLIC_APP_URL=${{ secrets.PUBLIC_APP_URL }}" >> .env
+          fi
 
       - name: Build
         working-directory: Build
@@ -26,6 +36,6 @@ jobs:
       - uses: NellowTCS/updato@1.0.3
         with:
           mode: version
-          dist_dir: Build/dist
+          dist_dir: Build/build
           version: ${{ steps.version.outputs.version }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
