@@ -12,6 +12,7 @@
 	--text-faint: #818b98;
 	--accent: #0969da;
 	--accent-hover: #0860ca;
+	--on-accent: #ffffff;
 	--accent-bg: #ddf4ff;
 	--accent-border: rgba(84, 174, 255, 0.4);
 	--primary: #1f883d;
@@ -60,6 +61,7 @@ html[data-theme='dark'] {
 	--text-faint: #7d8590;
 	--accent: #4493f8;
 	--accent-hover: #58a6ff;
+	--on-accent: #ffffff;
 	--accent-bg: rgba(56, 139, 253, 0.15);
 	--accent-border: rgba(56, 139, 253, 0.4);
 	--primary: #238636;

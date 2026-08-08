@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { sortedStatuses, filteredRepos, store, vanishedIds } from '$lib/state.svelte';
+	import { sortedStatuses, filteredRepos, store, session, vanishedIds } from '$lib/state.svelte';
 	import { suggestDismissed, showSuggestions } from '$lib/suggestDismiss.svelte';
+	import { login } from '$lib/api';
 	import BoardColumn from './BoardColumn.svelte';
 	import SuggestedPanel from './SuggestedPanel.svelte';
 	import { Info } from 'lucide-svelte';
@@ -19,6 +20,7 @@
 		}))
 	);
 	const vanished = $derived(vanishedIds());
+	const hasRepoScope = $derived(session.scopes.includes('repo'));
 
 	// Horizontal auto-scroll: while a card is dragged near the board's edge, the
 	// column row scrolls so the card can reach columns off-screen.
@@ -67,6 +69,10 @@
 		<Info size={14} />
 		{vanished.length} repo{vanished.length === 1 ? '' : 's'} no longer appear on GitHub. Their
 		status is kept so it returns if the repo does.
+		{#if !hasRepoScope}
+			Private repos are hidden because this login lacks the <code>repo</code> scope, so
+			<button class="link" onclick={() => login()}>reconnect</button> to see them.
+		{/if}
 	</p>
 {/if}
 
@@ -113,6 +119,18 @@
 		background: var(--bg-subtle);
 		color: var(--text-dim);
 		font-size: 12.5px;
+	}
+	.vanished code {
+		font-size: 0.95em;
+	}
+	.vanished .link {
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: var(--accent);
+		font-size: inherit;
+		text-decoration: underline;
+		cursor: pointer;
 	}
 	.restore {
 		margin: 0 0 14px;

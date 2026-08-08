@@ -14,7 +14,6 @@
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.70.2",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
-		"@types/d3": "^7.4.3",
 		"@vite-pwa/assets-generator": "^1.0.2",
 		"@vite-pwa/sveltekit": "^1.1.0",
 		"svelte": "^5.56.8",
@@ -24,7 +23,7 @@
 	},
 	"dependencies": {
 		"@nellowtcs/updato": "^1.0.3",
-		"d3": "^7.9.0",
-		"lucide-svelte": "^1.0.1"
+		"lucide-svelte": "^1.0.1",
+		"vis-network": "^10.1.1"
 	}
 }

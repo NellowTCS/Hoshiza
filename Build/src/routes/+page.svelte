@@ -64,15 +64,27 @@
 				<button
 					class="icon-btn"
 					class:syncing={sync.status === 'syncing'}
-					title={sync.status === 'syncing' ? 'Syncing to GitHub…' : 'Synced to GitHub'}
+					class:pending={sync.dirty && sync.status !== 'syncing'}
+					title={
+						sync.status === 'syncing'
+							? 'Syncing to GitHub…'
+							: sync.dirty
+								? 'Changes waiting to be pushed to GitHub'
+								: 'Synced to GitHub'
+					}
 					aria-label="Sync status"
 					onclick={() => (ui.showSync = true)}
 				>
-					{#if sync.status === 'syncing'}
-						<Loader2 class="spin" size={16} />
-					{:else}
-						<CloudUpload size={16} />
-					{/if}
+					<span class="sync-icon">
+						{#if sync.status === 'syncing'}
+							<Loader2 class="spin" size={16} />
+						{:else}
+							<CloudUpload size={16} />
+						{/if}
+						{#if sync.dirty && sync.status !== 'syncing'}
+							<span class="pending-dot"></span>
+						{/if}
+					</span>
 				</button>
 			{/if}
 			<button
@@ -294,6 +306,23 @@
 	}
 	.icon-btn.syncing {
 		color: var(--accent);
+	}
+	.icon-btn.pending {
+		color: var(--attention);
+	}
+	.sync-icon {
+		position: relative;
+		display: inline-flex;
+	}
+	.pending-dot {
+		position: absolute;
+		top: -3px;
+		right: -3px;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		background: var(--attention);
+		border: 2px solid var(--topbar);
 	}
 	.icon-btn.danger:hover:not(:disabled) {
 		color: var(--danger);

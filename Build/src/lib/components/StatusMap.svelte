@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { forceSimulation, forceLink, forceManyBody, forceX, forceY, forceCollide } from 'd3';
+	import { onDestroy } from 'svelte';
+	import { Network } from 'vis-network';
+	import type { Node as VisNode, Edge as VisEdge, Options } from 'vis-network';
 	import type { GroupBy, Repo, SizeBy } from '$lib/types';
 	import {
 		store,
@@ -9,47 +11,33 @@
 		statusById
 	} from '$lib/state.svelte';
 	import { monthsSincePush } from '$lib/suggest';
-	import { orgOf } from '$lib/format';
+	import { formatStars, orgOf, timeAgo } from '$lib/format';
+	import { theme } from '$lib/theme.svelte';
+
+	const REPO_ID = 'r:';
+	const HUB_ID = 'h:';
 
 	let groupBy = $state<GroupBy>('language');
 	let sizeBy = $state<SizeBy>('stars');
 
-	let root: HTMLDivElement;
-	let width = $state(800);
-	let height = $state(500);
+	let mapEl: HTMLDivElement;
+	let netEl = $state<HTMLDivElement>();
+	let network: Network | undefined;
 
-	interface MapNode {
-		id: string;
-		name: string;
-		repo?: Repo;
-		hub: boolean;
-		x: number;
-		y: number;
-		r: number;
-		color: string;
+	const repoByNode = new Map<string, Repo>();
+
+	const list = $derived(filteredRepos());
+
+	function cssVar(name: string): string {
+		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 	}
-
-	interface MapLine {
-		x1: number;
-		y1: number;
-		x2: number;
-		y2: number;
-	}
-
-	let nodes = $state<MapNode[]>([]);
-	let lines = $state<MapLine[]>([]);
-
-	const hubNodes = $derived(nodes.filter((n): n is MapNode & { hub: true } => n.hub));
-	const leafNodes = $derived(
-		nodes.filter((n): n is MapNode & { repo: Repo } => !n.hub && !!n.repo)
-	);
 
 	function radiusOf(r: Repo): number {
 		if (sizeBy === 'stars') {
-			return Math.min(26, Math.max(7, 7 + 4.6 * Math.log10(r.stargazerCount + 1)));
+			return Math.min(40, Math.max(15, 15 + 6 * Math.log10(r.stargazerCount + 1)));
 		}
 		const m = monthsSincePush(r);
-		return Math.min(26, Math.max(7, 7 + 20 / (1 + m)));
+		return Math.min(40, Math.max(15, 15 + 24 / (1 + m)));
 	}
 
 	function statusColor(r: Repo): string {
@@ -62,12 +50,18 @@
 		return groupBy === 'language' ? (r.primaryLanguage?.name ?? 'no language') : orgOf(r);
 	}
 
+	function destroyNetwork(): void {
+		network?.destroy();
+		network = undefined;
+	}
+
 	$effect(() => {
-		const el = root;
+		const el = mapEl;
 		if (!el) return;
 		const set = () => {
-			width = el.clientWidth;
-			height = Math.max(380, Math.round(el.clientWidth * 0.58));
+			if (netEl) {
+				netEl.style.height = `${Math.max(380, Math.round(el.clientWidth * 0.58))}px`;
+			}
 		};
 		set();
 		const ro = new ResizeObserver(set);
@@ -75,88 +69,163 @@
 		return () => ro.disconnect();
 	});
 
-	// Deterministic layout: a few hundred fixed simulation ticks, no live timer,
-	// so the constellation is stable across renders and re-renders.
+	function build(): void {
+		if (!netEl) return;
+		destroyNetwork();
+		repoByNode.clear();
+
+		const nodes: VisNode[] = [];
+		const edges: VisEdge[] = [];
+		const hubs = new Map<string, { id: string; count: number }>();
+
+		const panel = cssVar('--panel');
+		const text = cssVar('--text');
+		const textDim = cssVar('--text-dim');
+		const border = cssVar('--border');
+
+		for (const r of list) {
+			const id = `${REPO_ID}${r.databaseId}`;
+			const c = statusColor(r);
+			const size = radiusOf(r);
+			repoByNode.set(id, r);
+			nodes.push({
+				id,
+				shape: 'dot',
+				size,
+				// Larger nodes repel harder so big stars don't crowd out small ones.
+				mass: Math.max(1.2, size / 8),
+				label: r.name,
+				color: {
+					background: c,
+					border: panel,
+					highlight: { background: c, border: textDim }
+				},
+				title: `${r.nameWithOwner} · ${formatStars(r.stargazerCount)} · updated ${timeAgo(r.pushedAt)}`
+			});
+
+			const g = groupOf(r);
+			if (g === null) continue;
+			let hub = hubs.get(g);
+			if (!hub) {
+				hub = { id: `${HUB_ID}${g}`, count: 0 };
+				hubs.set(g, hub);
+				nodes.push({
+					id: hub.id,
+					shape: 'dot',
+					size: 4,
+					mass: 4,
+					label: g,
+					font: {
+						color: textDim,
+						size: 13,
+						face: 'system-ui',
+						bold: { size: 13 },
+						vadjust: 6
+					},
+					color: {
+						background: textDim,
+						border: panel,
+						highlight: { background: textDim, border: textDim }
+					}
+				});
+			}
+			hub.count += 1;
+			edges.push({ from: id, to: hub.id });
+		}
+
+		const hubById = new Map([...hubs.values()].map((h) => [h.id, h]));
+		for (const n of nodes) {
+			const h = hubById.get(String(n.id));
+			if (h) n.title = `${h.count} repo${h.count === 1 ? '' : 's'}`;
+		}
+
+		const options: Options = {
+			autoResize: true,
+			layout: {
+				// Kamada-Kawai seeding gives sane initial clusters instead of a
+				// random scatter, so stabilization converges faster and groups
+				// (languages/orgs) stay visually distinct.
+				improvedLayout: true
+			},
+			nodes: {
+				shape: 'dot',
+				borderWidth: 2,
+				font: { color: text, size: 12, face: 'system-ui' },
+				shadow: { enabled: true, size: 8, x: 0, y: 2, color: 'rgba(0,0,0,0.22)' }
+			},
+			edges: {
+				color: { color: border, highlight: textDim },
+				width: 1,
+				smooth: false
+			},
+			interaction: {
+				hover: true,
+				tooltipDelay: 120,
+				navigationButtons: false,
+				multiselect: false,
+				selectConnectedEdges: false,
+				dragView: true,
+				zoomView: true
+			},
+			physics: {
+				enabled: true,
+				solver: 'barnesHut',
+				barnesHut: {
+					// Light repulsion + strong central pull: nodes keep a gentle
+					// space-drift without inflating away from the center.
+					gravitationalConstant: -800,
+					centralGravity: 0.5,
+					springLength: 90,
+					springConstant: 0.04,
+					damping: 0.4,
+					avoidOverlap: 0.2
+				},
+				stabilization: { iterations: 250, updateInterval: 30, fit: true },
+				maxVelocity: 30,
+				minVelocity: 0.1
+			}
+		};
+
+		network = new Network(netEl, { nodes, edges }, options);
+		// Don't let the auto-fit zoom so far out that nodes and labels turn into
+		// specks, obviously :/
+		network.once('stabilizationIterationsDone', () => {
+			const scale = network?.getScale() ?? 1;
+			if (scale < 0.55) network?.moveTo({ scale: 0.55 });
+		});
+		// Freeze physics while a node is being dragged so the solver doesn't
+		// churn the cluster and make the edges flash; resume on release.
+		network.on('dragStart', (params) => {
+			if ((params.nodes?.length ?? 0) > 0) network?.setOptions({ physics: { enabled: false } });
+		});
+		network.on('dragEnd', () => {
+			network?.setOptions({ physics: { enabled: true } });
+		});
+		network.on('click', (params) => {
+			const id = params.nodes?.[0];
+			if (typeof id === 'string' && id.startsWith(REPO_ID)) {
+				const repo = repoByNode.get(id);
+				if (repo) {
+					network?.unselectAll();
+					ui.selectedRepo = repo;
+				}
+			}
+		});
+	}
+
 	$effect(() => {
-		const w = width;
-		const h = height;
-		const list = filteredRepos();
-		if (list.length === 0) {
-			nodes = [];
-			lines = [];
+		theme.value;
+		groupBy;
+		sizeBy;
+		const hasRepos = list.length > 0;
+		if (!hasRepos) {
+			destroyNetwork();
 			return;
 		}
-
-		const repoNodes: MapNode[] = list.map((r) => ({
-			id: `r:${r.databaseId}`,
-			name: r.name,
-			repo: r,
-			hub: false,
-			x: 0,
-			y: 0,
-			r: radiusOf(r),
-			color: statusColor(r)
-		}));
-
-		const hubs: MapNode[] = [];
-		const members = new Map<string, MapNode[]>();
-		for (const n of repoNodes) {
-			const g = groupOf(n.repo!);
-			if (g === null) continue;
-			if (!members.has(g)) {
-				hubs.push({ id: `h:${g}`, name: g, hub: true, x: 0, y: 0, r: 1, color: '' });
-				members.set(g, []);
-			}
-			members.get(g)!.push(n);
-		}
-
-		interface LinkDatum {
-			source: string;
-			target: string;
-			distance: number;
-		}
-		const links: LinkDatum[] = hubs.flatMap((hub) => {
-			const ms = members.get(hub.name) ?? [];
-			return ms.map((m) => ({ source: m.id, target: hub.id, distance: m.r + 34 }));
-		});
-
-		const simNodes: MapNode[] = [...hubs, ...repoNodes];
-		const sim = forceSimulation<MapNode>(simNodes)
-			.force(
-				'link',
-				forceLink<MapNode, LinkDatum>(links)
-					.id((d) => d.id)
-					.distance((d) => d.distance)
-			)
-			.force('charge', forceManyBody<MapNode>().strength((d) => (d.hub ? -260 : -30)))
-			.force('x', forceX<MapNode>(w / 2).strength((d) => (d.hub ? 0.12 : 0.05)))
-			.force('y', forceY<MapNode>(h / 2).strength((d) => (d.hub ? 0.12 : 0.05)))
-			.force('collide', forceCollide<MapNode>().radius((d) => d.r + 5).strength(0.85))
-			.alpha(0.5)
-			.alphaDecay(0.012)
-			.stop();
-		for (let i = 0; i < 400; i++) sim.tick();
-
-		const settled: MapNode[] = simNodes.map((n) => ({
-			id: n.id,
-			name: n.name,
-			repo: n.repo,
-			hub: n.hub,
-			x: Math.max(n.r + 22, Math.min(w - n.r - 22, n.x)),
-			y: Math.max(n.r + 22, Math.min(h - n.r - 22, n.y)),
-			r: n.r,
-			color: n.color
-		}));
-
-		const byId = new Map(settled.map((n) => [n.id, n]));
-		nodes = settled;
-		lines = links.flatMap((l) => {
-			const s = byId.get(l.source);
-			const t = byId.get(l.target);
-			if (!s || !t) return [];
-			return [{ x1: s.x, y1: s.y, x2: t.x, y2: t.y }];
-		});
+		if (netEl) build();
 	});
+
+	onDestroy(destroyNetwork);
 </script>
 
 <div class="wrap">
@@ -183,45 +252,11 @@
 		</span>
 	</div>
 
-	<div class="map" bind:this={root}>
-		{#if nodes.length === 0}
+	<div class="map" bind:this={mapEl}>
+		{#if list.length === 0}
 			<p class="none">No repos to map.</p>
 		{:else}
-			<svg
-				class="canvas"
-				viewBox={`0 0 ${width} ${height}`}
-				role="img"
-				aria-label="Repository status map"
-			>
-				<defs>
-					<filter id="node-glow" x="-60%" y="-60%" width="220%" height="220%">
-						<feDropShadow dx="0" dy="1" stdDeviation="1.6" flood-color="rgba(31,35,40,0.35)" />
-					</filter>
-				</defs>
-				{#each lines as l (l.x1 + ':' + l.y1)}
-					<line class="link" x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} />
-				{/each}
-				{#each hubNodes as n (n.id)}
-					<g class="hub">
-						<circle cx={n.x} cy={n.y} r={3.5} />
-						<text class="hub-label" x={n.x + 10} y={n.y + 4}>{n.name}</text>
-					</g>
-				{/each}
-				{#each leafNodes as n (n.id)}
-					<g
-						class="bubble"
-						role="button"
-						tabindex="0"
-						onclick={() => (ui.selectedRepo = n.repo)}
-						onkeydown={(e) => e.key === 'Enter' && (ui.selectedRepo = n.repo)}
-						transform={`translate(${n.x} ${n.y})`}
-					>
-						<circle class="node" r={n.r} fill={n.color} />
-						<text class="node-label" y={-n.r - 8}>{n.name}</text>
-						<title>{n.repo.nameWithOwner} · {n.name}</title>
-					</g>
-				{/each}
-			</svg>
+			<div class="net" bind:this={netEl}></div>
 		{/if}
 	</div>
 	<p class="caption">
@@ -306,55 +341,9 @@
 		border-radius: var(--radius);
 		padding: 6px;
 	}
-	.canvas {
-		display: block;
-		width: 100%;
-		height: auto;
-		overflow: visible;
-	}
-	.link {
-		stroke: var(--border);
-		stroke-width: 1;
-	}
-	.hub circle {
-		fill: var(--text-dim);
-		opacity: 0.55;
-	}
-	.hub-label {
-		fill: var(--text-dim);
-		font-size: 12px;
-		font-weight: 600;
-		pointer-events: none;
+	.net {
+		position: relative;
 		user-select: none;
-	}
-	.bubble {
-		cursor: pointer;
-		outline: none;
-	}
-	.bubble .node {
-		stroke: var(--panel);
-		stroke-width: 2;
-		filter: url(#node-glow);
-		transform-box: fill-box;
-		transform-origin: center;
-		transition: transform 0.12s ease;
-	}
-	.bubble:hover .node,
-	.bubble:focus .node {
-		transform: scale(1.18);
-	}
-	.node-label {
-		fill: var(--text);
-		font-size: 11px;
-		font-weight: 500;
-		text-anchor: middle;
-		opacity: 0;
-		pointer-events: none;
-		transition: opacity 0.12s ease;
-	}
-	.bubble:hover .node-label,
-	.bubble:focus .node-label {
-		opacity: 1;
 	}
 	.none {
 		margin: 0;
@@ -366,5 +355,18 @@
 		margin: 0;
 		color: var(--text-dim);
 		font-size: 12px;
+	}
+	:global(.vis-tooltip) {
+		position: absolute;
+		background: var(--panel);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--text);
+		padding: 5px 9px;
+		font-size: 12px;
+		line-height: 1.5;
+		box-shadow: var(--shadow-lg);
+		pointer-events: none;
+		white-space: nowrap;
 	}
 </style>

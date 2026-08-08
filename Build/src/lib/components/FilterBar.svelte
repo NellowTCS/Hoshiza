@@ -1,7 +1,14 @@
 <script lang="ts">
-	import { filters, languageOptions, orgOptions, filteredRepos, repos } from '$lib/state.svelte';
+	import { filters, languageOptions, orgOptions, filteredRepos, repos, FILTERS_KEY } from '$lib/state.svelte';
 	import { Search, X } from 'lucide-svelte';
 	import MultiSelect from './MultiSelect.svelte';
+
+	// Persist filter/exclude selections (search, language/org includes and
+	// excludes, hide flags) so they survive a reload. Runs on the client only.
+	$effect(() => {
+		if (typeof localStorage === 'undefined') return;
+		localStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
+	});
 
 	const languages = $derived(
 		languageOptions().map((l) => ({ value: l, label: l === 'none' ? 'no language' : l }))

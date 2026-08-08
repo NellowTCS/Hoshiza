@@ -65,7 +65,7 @@ async function apiMessage(r: Response): Promise<string> {
 }
 
 /** Kick off the OAuth flow. The Worker handles the exchange and sets the cookie. */
-export function login(scope = READ_SCOPES, next = '/'): void {
+export function login(next = '/', scope = READ_SCOPES): void {
 	const origin = encodeURIComponent(location.origin + APP_BASE);
 	location.href = `${WORKER_URL}/login?scope=${encodeURIComponent(scope)}&next=${encodeURIComponent(next)}&origin=${origin}`;
 }
@@ -102,6 +102,7 @@ interface PageInfo {
 interface ReposPayload {
 	[key: string]: {
 		repositories: {
+			totalCount: number;
 			pageInfo: PageInfo;
 			nodes: Repo[];
 		};
@@ -111,6 +112,7 @@ interface ReposPayload {
 interface OrgPayload {
 	viewer: {
 		organizations: {
+			totalCount: number;
 			pageInfo: PageInfo;
 			nodes: { login: string }[];
 		};
@@ -146,14 +148,15 @@ async function reposPage(
 	owner: string,
 	affiliations: string | null,
 	after: string | null
-): Promise<{ nodes: Repo[]; pageInfo: PageInfo }> {
+): Promise<{ nodes: Repo[]; pageInfo: PageInfo; totalCount: number }> {
 	const ownerSel = owner === 'viewer' ? 'viewer' : `organization(login:${JSON.stringify(owner)})`;
 	// Response keys use the field name, not the login: `viewer` or `organization`.
 	const dataKey = owner === 'viewer' ? 'viewer' : 'organization';
 	const aff = affiliations ? `, affiliations:[${affiliations}]` : '';
 	const query = `query($c:String){
 		${ownerSel} {
-			repositories(first:100, after:$c${aff}, orderBy:{field:PUSHED_AT, direction:DESC}) {
+			repositories(first:100, after:$c${aff}) {
+				totalCount
 				pageInfo { hasNextPage endCursor }
 				nodes { ${REPO_FIELDS} }
 			}
@@ -165,48 +168,109 @@ async function reposPage(
 	return ownerData.repositories;
 }
 
+/** Number of pagination passes for a connection before giving up on it. */
+const RETRY_ATTEMPTS = 2;
+
 /**
- * Fetch every repo the viewer can see: their own, then one page set per org they
- * belong to. The `viewer.repositories` connection with mixed affiliations silently
- * omits repos from some orgs, so organizations are enumerated explicitly.
+ * Fetch all repos visible under one owner, re-running the whole pagination if
+ * GitHub skipped any
  */
-export async function fetchAllRepos(): Promise<Repo[]> {
-	const byId = new Map<number, Repo>();
-	let cursor: string | null = null;
-	do {
-		const { nodes, pageInfo } = await reposPage('viewer', 'OWNER', cursor);
-		for (const r of nodes) byId.set(r.databaseId, r);
-		cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
-	} while (cursor);
-
-	const orgs: string[] = [];
-	cursor = null;
-	do {
-		const query = `query($c:String){
-			viewer {
-				organizations(first:100, after:$c) {
-					pageInfo { hasNextPage endCursor }
-					nodes { login }
-				}
-			}
-		}`;
-		// Explicit annotation avoids a TS circular-inference quirk (TS7022)
-		// where `res` picks up type `any` inside this do/while.
-		const res: OrgPayload = await post(query, { c: cursor });
-		for (const o of res.viewer.organizations.nodes) orgs.push(o.login);
-		cursor = res.viewer.organizations.pageInfo.hasNextPage
-			? res.viewer.organizations.pageInfo.endCursor
-			: null;
-	} while (cursor);
-
-	for (const login of orgs) {
-		cursor = null;
+async function allReposFor(
+	owner: string,
+	affiliations: string | null
+): Promise<{ repos: Repo[]; totalCount: number }> {
+	let best: Repo[] = [];
+	let total = 0;
+	for (let attempt = 0; attempt < RETRY_ATTEMPTS; attempt++) {
+		const nodes: Repo[] = [];
+		let cursor: string | null = null;
 		do {
-			const { nodes, pageInfo } = await reposPage(login, 'OWNER,ORGANIZATION_MEMBER', cursor);
-			for (const r of nodes) byId.set(r.databaseId, r);
+			const { nodes: page, pageInfo, totalCount } = await reposPage(owner, affiliations, cursor);
+			nodes.push(...page);
+			total = totalCount;
 			cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
 		} while (cursor);
+		best = nodes;
+		if (nodes.length >= total) break;
+	}
+	return { repos: best, totalCount: total };
+}
+
+/** The logins of every org the viewer belongs to, retried if the list is short. */
+async function allOrgLogins(): Promise<{ logins: string[]; totalCount: number }> {
+	let best: string[] = [];
+	let total = 0;
+	for (let attempt = 0; attempt < RETRY_ATTEMPTS; attempt++) {
+		const logins: string[] = [];
+		let cursor: string | null = null;
+		let pageTotal = 0;
+		do {
+			const query = `query($c:String){
+				viewer {
+					organizations(first:100, after:$c) {
+						totalCount
+						pageInfo { hasNextPage endCursor }
+						nodes { login }
+					}
+				}
+			}`;
+			// Explicit annotation avoids a TS circular-inference quirk (TS7022)
+			// where `res` picks up type `any` inside this do/while.
+			const res: OrgPayload = await post(query, { c: cursor });
+			for (const o of res.viewer.organizations.nodes) logins.push(o.login);
+			pageTotal = res.viewer.organizations.totalCount;
+			cursor = res.viewer.organizations.pageInfo.hasNextPage
+				? res.viewer.organizations.pageInfo.endCursor
+				: null;
+		} while (cursor);
+		best = logins;
+		total = pageTotal;
+		if (logins.length >= pageTotal) break;
+	}
+	return { logins: best, totalCount: total };
+}
+
+export interface OwnerHaul {
+	name: string;
+	fetched: number;
+	total: number;
+}
+
+export interface FetchResult {
+	repos: Repo[];
+	// False when GitHub returned fewer repos than its own totalCount says exist
+	complete: boolean;
+	// Per-owner pagination outcome so a truncated fetch can name the culprit.
+	owners: OwnerHaul[];
+}
+
+/**
+ * Fetch every repo the viewer can see: their own, then one page set per org they
+ * belong to.
+ */
+export async function fetchAllRepos(): Promise<FetchResult> {
+	const byId = new Map<number, Repo>();
+	const owners: OwnerHaul[] = [];
+
+	const own = await allReposFor('viewer', 'OWNER');
+	owners.push({ name: 'viewer', fetched: own.repos.length, total: own.totalCount });
+	for (const r of own.repos) byId.set(r.databaseId, r);
+
+	const orgs = await allOrgLogins();
+	owners.push({ name: 'organizations', fetched: orgs.logins.length, total: orgs.totalCount });
+	let complete = own.repos.length >= own.totalCount && orgs.logins.length >= orgs.totalCount;
+	let expected = own.totalCount;
+
+	for (const login of orgs.logins) {
+		const orgRepos = await allReposFor(login, null);
+		owners.push({ name: login, fetched: orgRepos.repos.length, total: orgRepos.totalCount });
+		if (orgRepos.repos.length < orgRepos.totalCount) complete = false;
+		expected += orgRepos.totalCount;
+		for (const r of orgRepos.repos) byId.set(r.databaseId, r);
 	}
 
-	return [...byId.values()].sort((a, b) => +new Date(b.pushedAt) - +new Date(a.pushedAt));
+	if (byId.size < expected) complete = false;
+
+	const list = [...byId.values()].sort((a, b) => +new Date(b.pushedAt) - +new Date(a.pushedAt));
+	return { repos: list, complete, owners };
 }

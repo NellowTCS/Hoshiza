@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { store, session, sync, pushToGitHub, pullFromGitHub, disableGithubSync } from '$lib/state.svelte';
 	import { login } from '$lib/api';
-	import { ALL_SCOPES } from '$lib/config';
 	import { DATA_REPO } from '$lib/state.svelte';
 	import { CloudUpload, CloudDownload, Loader2, X } from 'lucide-svelte';
 
@@ -38,10 +37,9 @@
 	}
 
 	function enable(): void {
-		// Re-auth with the full scope set (read + write). Requesting `repo`
-		// alone would replace the token's scopes and break org/identity calls.
+		// The default login already carries the `repo` scope sync needs.
 		// `next=/?sync=1` makes the page kick off sync on return.
-		login(ALL_SCOPES, '/?sync=1');
+		login('/?sync=1');
 	}
 </script>
 
@@ -59,6 +57,12 @@
 			Auto-sync is on: every change is pushed within seconds, once your edits settle.
 			<span class="last">Last synced {lastSyncedLabel}</span>
 		</p>
+		{#if sync.dirty && sync.status !== 'syncing'}
+			<p class="pending">
+				<span class="pend-dot"></span>
+				Changes are waiting to be pushed to GitHub.
+			</p>
+		{/if}
 		<div class="row">
 			<button onclick={() => run(() => pushToGitHub(), 'Pushed.')} disabled={busy}>
 				<CloudUpload size={14} /> Push now
@@ -130,6 +134,21 @@
 	.autosync .last {
 		color: var(--text-dim);
 		font-size: 11.5px;
+	}
+	.pending {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin: 0;
+		color: var(--attention);
+		font-size: 12.5px;
+	}
+	.pend-dot {
+		flex: none;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--attention);
 	}
 	.pill {
 		padding: 2px 8px;

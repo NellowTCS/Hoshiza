@@ -1,12 +1,14 @@
 import type { AppState, Repo, RepoState, Status } from './types';
 import { replaceState } from '$app/navigation';
 import { gh, GhError, GhAuthError, fetchSessionInfo, fetchAllRepos } from './api';
+import { loadRepos, saveRepos, isReposCacheStale } from './repoCache';
 import { suggestStatus } from './suggest';
 import { orgOf } from './format';
 
 export const KEY = 'hoshiza_state_v1';
 export const DATA_REPO = 'hoshiza-data';
 export const DATA_FILE = 'state.json';
+export const FILTERS_KEY = 'hoshiza_filters_v1';
 
 const FALLBACK_COLORS = ['#6a9fff', '#8a6d3b', '#2f6d5b', '#6b655c', '#484f58', '#c8452f'];
 
@@ -112,22 +114,61 @@ export const ui = $state<{
 export const repos = $state<Repo[]>([]);
 /** databaseId keys present in the latest GitHub fetch. Object (not Set) for reliable reactivity. */
 export const knownIds = $state<Record<string, boolean>>({});
-export const filters = $state({
-	query: '',
-	includedLanguages: [] as string[],
-	excludedLanguages: [] as string[],
-	includedOrgs: [] as string[],
-	excludedOrgs: [] as string[],
-	hideForks: false,
-	hideArchived: false
-});
+
+interface FilterState {
+	query: string;
+	includedLanguages: string[];
+	excludedLanguages: string[];
+	includedOrgs: string[];
+	excludedOrgs: string[];
+	hideForks: boolean;
+	hideArchived: boolean;
+}
+
+function defaultFilters(): FilterState {
+	return {
+		query: '',
+		includedLanguages: [],
+		excludedLanguages: [],
+		includedOrgs: [],
+		excludedOrgs: [],
+		hideForks: false,
+		hideArchived: false
+	};
+}
+
+function loadFilters(): FilterState {
+	if (typeof localStorage === 'undefined') return defaultFilters(); // prerender-safe
+	try {
+		const raw = localStorage.getItem(FILTERS_KEY);
+		if (!raw) return defaultFilters();
+		const p = JSON.parse(raw) as Partial<FilterState>;
+		const strArr = (v: unknown): string[] =>
+			Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+		return {
+			query: typeof p.query === 'string' ? p.query : '',
+			includedLanguages: strArr(p.includedLanguages),
+			excludedLanguages: strArr(p.excludedLanguages),
+			includedOrgs: strArr(p.includedOrgs),
+			excludedOrgs: strArr(p.excludedOrgs),
+			hideForks: p.hideForks === true,
+			hideArchived: p.hideArchived === true
+		};
+	} catch {
+		return defaultFilters();
+	}
+}
+
+export const filters = $state<FilterState>(loadFilters());
 
 /** Live sync status for the header indicator and the sync panel. */
 export const sync = $state<{
 	status: 'idle' | 'syncing';
 	lastSyncedAt: number | null;
 	error: string | null;
-}>({ status: 'idle', lastSyncedAt: null, error: null });
+	// True from the first edit after the last push until the next push lands.
+	dirty: boolean;
+}>({ status: 'idle', lastSyncedAt: null, error: null, dirty: false });
 
 // Non-reactive lookup cache kept in sync with `repos` by mergeRepos.
 const repoIndex = new Map<number, Repo>();
@@ -145,8 +186,10 @@ export function saveLocal(): void {
 const AUTOSYNC_DELAY = 5000;
 
 let autosyncTimer: ReturnType<typeof setTimeout> | undefined;
-let autosyncDirty = false;
 let autosyncPushing = false;
+// Set when the quiet-window timer fires mid-push; the follow-up push runs
+// right after the in-flight one finishes so no edit is dropped.
+let autosyncQueued = false;
 let lastPushedSignature = '';
 
 // Session caches so routine syncs stay cheap on GitHub
@@ -157,45 +200,37 @@ function stateSignature(): string {
 	return JSON.stringify([store.statuses, store.repos]);
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function scheduleAutosync(): void {
 	if (store.storageMode !== 'github') return;
-	autosyncDirty = true;
-	if (autosyncTimer || autosyncPushing) return;
+	sync.dirty = true;
+	// Debounce: wait for a quiet window before pushing, so rapid edits don't thrash GitHub
+	clearTimeout(autosyncTimer);
 	autosyncTimer = setTimeout(() => {
 		autosyncTimer = undefined;
+		if (autosyncPushing) {
+			autosyncQueued = true;
+			return;
+		}
 		void autosyncFlush();
 	}, AUTOSYNC_DELAY);
 }
 
 async function autosyncFlush(): Promise<void> {
 	autosyncPushing = true;
+	sync.status = 'syncing';
 	try {
-		do {
-			autosyncDirty = false;
-			if (stateSignature() === lastPushedSignature) return;
-			sync.status = 'syncing';
-			try {
-				await pushToGitHub();
-			} catch (e) {
-				sync.status = 'idle';
-				sync.error = e instanceof Error ? e.message : String(e);
-				return;
-			}
-			// The push just re-marked dirty (its own saveLocal) and the user may
-			// have edited mid-push. Either way, wait out a full quiet window before
-			// the next push so active editing stays coalesced into single commits.
-			if (autosyncDirty) {
-				autosyncDirty = false;
-				await sleep(AUTOSYNC_DELAY);
-			}
-		} while (autosyncDirty);
+		if (stateSignature() === lastPushedSignature) return;
+		await pushToGitHub();
+	} catch (e) {
+		sync.error = e instanceof Error ? e.message : String(e);
+		return;
 	} finally {
 		autosyncPushing = false;
 		sync.status = 'idle';
+		if (autosyncQueued) {
+			autosyncQueued = false;
+			void autosyncFlush();
+		}
 	}
 }
 
@@ -255,6 +290,19 @@ export function moveStatus(id: string, dir: -1 | 1): void {
 	const tmp = a.order;
 	a.order = b.order;
 	b.order = tmp;
+	saveLocal();
+}
+
+/** Move a status to a given list index (0-based), for drag-and-drop reordering. */
+export function moveStatusTo(id: string, targetIndex: number): void {
+	const list = sortedStatuses();
+	const from = list.findIndex((s) => s.id === id);
+	if (from === -1) return;
+	const to = Math.max(0, Math.min(list.length - 1, targetIndex));
+	if (to === from) return;
+	const [status] = list.splice(from, 1);
+	list.splice(to, 0, status);
+	list.forEach((s, i) => (s.order = i));
 	saveLocal();
 }
 
@@ -384,17 +432,19 @@ export function suggestedRepos(): Repo[] {
 
 // Merge rule
 
-/**
- * Merge a fresh fetch into local state. Existing assignments are NEVER touched;
- * unknown repos are seeded with a suggestion. State for repos that vanished from
- * GitHub is kept (not deleted) so it survives if the repo returns.
- */
-export function mergeRepos(fetched: Repo[]): void {
-	repos.splice(0, repos.length, ...fetched);
+export function mergeRepos(fetched: Repo[], complete = true): void {
+	const prev = new Map<number, Repo>(repos.map((r) => [r.databaseId, r]));
+	const merged = new Map<number, Repo>();
+	for (const r of fetched) merged.set(r.databaseId, r);
+	if (!complete) {
+		for (const [id, r] of prev) if (!merged.has(id)) merged.set(id, r);
+	}
+	const list = [...merged.values()].sort((a, b) => +new Date(b.pushedAt) - +new Date(a.pushedAt));
+	repos.splice(0, repos.length, ...list);
 	repoIndex.clear();
 	const seen: Record<string, boolean> = {};
 	const newKeys: string[] = [];
-	for (const r of fetched) {
+	for (const r of list) {
 		repoIndex.set(r.databaseId, r);
 		const key = String(r.databaseId);
 		seen[key] = true;
@@ -403,8 +453,10 @@ export function mergeRepos(fetched: Repo[]): void {
 			newKeys.push(key);
 		}
 	}
-	for (const k of Object.keys(knownIds)) delete knownIds[k];
-	for (const k of Object.keys(seen)) knownIds[k] = true;
+	if (complete) {
+		for (const k of Object.keys(knownIds)) delete knownIds[k];
+		for (const k of Object.keys(seen)) knownIds[k] = true;
+	}
 	for (const key of newKeys) renumberColumn(store.repos[key].status);
 	saveLocal();
 }
@@ -488,6 +540,10 @@ function validateState(v: unknown): string | null {
 
 // Session / init
 
+/** Minimum gap between full repo fetches once a snapshot exists. */
+const REFRESH_MIN_INTERVAL_MS = 30_000;
+let lastRepoFetchAt = 0;
+
 export async function init(): Promise<void> {
 	if (session.loading) return;
 	session.pending = false;
@@ -498,7 +554,21 @@ export async function init(): Promise<void> {
 		session.viewer = { login: user.login, name: user.name, avatar: user.avatar_url };
 		session.scopes = scopes;
 		session.signedIn = true;
-		await refreshRepos();
+		const snapshot = await loadRepos(user.login);
+		if (snapshot) {
+			// Paint the cached board immediately, then refresh in the background
+			// only when the snapshot is stale. A failed refresh must not blank
+			// the working snapshot, so its error goes to the console, not
+			// session.error (which would swap the board for the error screen).
+			mergeRepos(snapshot.repos, true);
+			if (isReposCacheStale(snapshot.cachedAt)) {
+				refreshRepos().catch((e) =>
+					console.warn('background repo refresh failed:', e instanceof Error ? e.message : e)
+				);
+			}
+		} else {
+			await refreshRepos();
+		}
 		// Pick up changes from another device before the user starts editing.
 		if (store.storageMode === 'github') await pullFromGitHub();
 		await completeSyncOptIn();
@@ -516,7 +586,21 @@ export async function init(): Promise<void> {
 }
 
 export async function refreshRepos(): Promise<void> {
-	mergeRepos(await fetchAllRepos());
+	// Gate refetches to a minimum interval once a snapshot exists
+	const now = Date.now();
+	if (repos.length > 0 && now - lastRepoFetchAt < REFRESH_MIN_INTERVAL_MS) return;
+	lastRepoFetchAt = now;
+	const { repos: fetched, complete, owners } = await fetchAllRepos();
+	mergeRepos(fetched, complete);
+	if (complete && session.viewer) await saveRepos(session.viewer.login, fetched);
+	if (!complete) {
+		const short = owners.filter((o) => o.fetched < o.total);
+		const detail = short.length
+			? short.map((o) => `${o.name} ${o.fetched}/${o.total}`).join(', ')
+			: 'repo counts don\'t add up';
+		console.warn('incomplete repo fetch:', owners);
+		session.error = `GitHub returned an incomplete repo list (${detail}); keeping the last full snapshot. Refresh to retry.`;
+	}
 }
 
 export function signOut(): void {
@@ -635,11 +719,16 @@ export async function pushToGitHub(): Promise<void> {
 	await ensureDataRepo();
 	saveLocal();
 	const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
+	if (cachedSha === undefined) {
+		// First push this session: resolve the current sha up front
+		await readRemoteSha(path);
+	}
 	await putState(path, cachedSha);
 	store.storageMode = 'github';
 	saveLocal();
 	lastPushedSignature = stateSignature();
 	sync.lastSyncedAt = Date.now();
+	sync.dirty = false;
 	sync.error = null;
 }
 
@@ -682,6 +771,7 @@ export async function pullFromGitHub(): Promise<void> {
 	saveLocal();
 	lastPushedSignature = stateSignature();
 	sync.lastSyncedAt = Date.now();
+	sync.dirty = false;
 	sync.error = null;
 }
 

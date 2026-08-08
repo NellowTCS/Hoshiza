@@ -6,12 +6,17 @@
 		updateStatus,
 		removeStatus,
 		moveStatus,
+		moveStatusTo,
 		resetStatuses
 	} from '$lib/state.svelte';
-	import { ChevronUp, ChevronDown, Trash2, Plus } from 'lucide-svelte';
+	import { ChevronUp, ChevronDown, Trash2, Plus, GripVertical } from 'lucide-svelte';
 
 	let newLabel = $state('');
 	let newColor = $state('#6a9fff');
+
+	let dragId = $state<string | null>(null);
+	let dropIdx = $state<number | null>(null);
+	let listEl: HTMLDivElement;
 
 	const countFor = (id: string) =>
 		Object.values(store.repos).filter((r) => r.status === id).length;
@@ -22,12 +27,66 @@
 		addStatus(label, newColor);
 		newLabel = '';
 	}
+
+	function onListDragOver(e: DragEvent): void {
+		e.preventDefault();
+		if (!dragId || !listEl) return;
+		const rows = listEl.querySelectorAll<HTMLElement>('[data-idx]');
+		let target = rows.length;
+		for (let i = 0; i < rows.length; i++) {
+			const r = rows[i].getBoundingClientRect();
+			if (e.clientY < r.top + r.height / 2) {
+				target = i;
+				break;
+			}
+		}
+		dropIdx = target;
+	}
+
+	function onDrop(e: DragEvent): void {
+		e.preventDefault();
+		const id = e.dataTransfer?.getData('text/plain') ?? dragId;
+		if (id && dropIdx !== null) moveStatusTo(id, dropIdx);
+		dragId = null;
+		dropIdx = null;
+	}
 </script>
 
 <div class="editor">
-	<div class="list">
+	<div
+		class="list"
+		role="list"
+		bind:this={listEl}
+		ondragover={onListDragOver}
+		ondragleave={() => (dropIdx = null)}
+		ondrop={onDrop}
+	>
 		{#each sortedStatuses() as s, i (s.id)}
-			<div class="row">
+			<div
+				class="row"
+				role="listitem"
+				class:dragging={dragId === s.id}
+				class:drop-before={dragId && dragId !== s.id && dropIdx === i}
+				class:drop-after={dragId && dragId !== s.id && dropIdx === i + 1}
+				data-idx={i}
+			>
+				<button
+					class="grip"
+					draggable="true"
+					title="Drag to reorder"
+					aria-label={`Reorder ${s.label}`}
+					ondragstart={(e) => {
+						dragId = s.id;
+						e.dataTransfer?.setData('text/plain', s.id);
+						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+					}}
+					ondragend={() => {
+						dragId = null;
+						dropIdx = null;
+					}}
+				>
+					<GripVertical size={15} />
+				</button>
 				<div class="order">
 					<button
 						class="move"
@@ -109,6 +168,29 @@
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: var(--panel);
+	}
+	.row.dragging {
+		opacity: 0.4;
+	}
+	.row.drop-before {
+		box-shadow: 0 -2px 0 0 var(--accent);
+	}
+	.row.drop-after {
+		box-shadow: 0 2px 0 0 var(--accent);
+	}
+	.grip {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 28px;
+		padding: 0;
+		color: var(--text-dim);
+		cursor: grab;
+		touch-action: none;
+	}
+	.grip:active {
+		cursor: grabbing;
 	}
 	.order {
 		display: flex;
