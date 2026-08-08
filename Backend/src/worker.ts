@@ -141,11 +141,12 @@ export default {
 				status: gh.status,
 				headers: {
 					...cors,
-					'Content-Type': gh.headers.get('Content-Type') ?? 'application/json'
+					'Content-Type': gh.headers.get('Content-Type') ?? 'application/json',
+					'Access-Control-Expose-Headers': 'x-oauth-scopes'
 				}
 			});
-			// Pass through pagination + rate-limit signals the client may want.
-			for (const name of ['Link', 'X-GitHub-RateLimit-Remaining'] as const) {
+			// Pass through pagination + rate-limit + scope signals the client may want.
+			for (const name of ['Link', 'X-GitHub-RateLimit-Remaining', 'X-OAuth-Scopes'] as const) {
 				const v = gh.headers.get(name);
 				if (v) out.headers.set(name, v);
 			}

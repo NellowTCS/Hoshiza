@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import type { Repo, Status } from '$lib/types';
 	import { moveRepo } from '$lib/state.svelte';
 	import RepoCard from './RepoCard.svelte';
@@ -7,6 +8,33 @@
 
 	let dragOver = $state(false);
 	let root: HTMLDivElement;
+	let listEl: HTMLDivElement;
+
+	// Vertical auto-scroll: dragging near the top/bottom of a tall column scrolls
+	// its card list so the card can reach off-screen positions within the column.
+	let vSpeed = 0;
+	let vRaf = 0;
+
+	function vStep(): void {
+		if (vSpeed === 0 || !listEl) {
+			vRaf = 0;
+			return;
+		}
+		listEl.scrollTop += vSpeed * 14;
+		vRaf = requestAnimationFrame(vStep);
+	}
+
+	function onListDragOver(e: DragEvent): void {
+		e.preventDefault();
+		const el = listEl;
+		if (!el) return;
+		const r = el.getBoundingClientRect();
+		const edge = 60;
+		if (e.clientY < r.top + edge) vSpeed = -1;
+		else if (e.clientY > r.bottom - edge) vSpeed = 1;
+		else vSpeed = 0;
+		if (vSpeed !== 0 && vRaf === 0) vRaf = requestAnimationFrame(vStep);
+	}
 
 	/** Insertion index derived from the pointer's Y over the column's cards. */
 	function dropIndex(clientY: number): number {
@@ -21,10 +49,25 @@
 	function handleDrop(e: DragEvent): void {
 		e.preventDefault();
 		dragOver = false;
+		vSpeed = 0;
 		const id = e.dataTransfer?.getData('text/plain');
 		if (!id) return;
 		moveRepo(id, status.id, dropIndex(e.clientY));
 	}
+
+	function releaseAutoScroll(): void {
+		vSpeed = 0;
+		dragOver = false;
+	}
+
+	onMount(() => {
+		window.addEventListener('dragend', releaseAutoScroll);
+		window.addEventListener('drop', releaseAutoScroll);
+		return () => {
+			window.removeEventListener('dragend', releaseAutoScroll);
+			window.removeEventListener('drop', releaseAutoScroll);
+		};
+	});
 </script>
 
 <div
@@ -46,7 +89,13 @@
 		<h3>{status.label}</h3>
 		<span class="count">{repos.length}</span>
 	</header>
-	<div class="list">
+	<div
+		class="list"
+		role="presentation"
+		bind:this={listEl}
+		ondragover={onListDragOver}
+		ondragleave={() => (vSpeed = 0)}
+	>
 		{#each repos as repo (repo.databaseId)}
 			<RepoCard {repo} />
 		{/each}

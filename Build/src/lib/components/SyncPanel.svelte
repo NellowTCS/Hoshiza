@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { store, session, sync, pushToGitHub, pullFromGitHub, disableGithubSync } from '$lib/state.svelte';
 	import { login } from '$lib/api';
-	import { WRITE_SCOPES } from '$lib/config';
+	import { ALL_SCOPES } from '$lib/config';
 	import { DATA_REPO } from '$lib/state.svelte';
 	import { CloudUpload, CloudDownload, Loader2, X } from 'lucide-svelte';
 
@@ -38,8 +38,10 @@
 	}
 
 	function enable(): void {
-		// Re-auth with write scope; `next=/?sync=1` makes the page kick off sync on return.
-		login(WRITE_SCOPES, '/?sync=1');
+		// Re-auth with the full scope set (read + write). Requesting `repo`
+		// alone would replace the token's scopes and break org/identity calls.
+		// `next=/?sync=1` makes the page kick off sync on return.
+		login(ALL_SCOPES, '/?sync=1');
 	}
 </script>
 
@@ -87,6 +89,13 @@
 		</p>
 		<button class="primary" onclick={enable}>Enable GitHub sync</button>
 	{/if}
+
+	<p class="scopes">
+		<span>Token scopes: {session.scopes.length ? session.scopes.join(', ') : 'unknown'}</span>
+		{#if session.scopes.length && !session.scopes.includes('repo')}
+			<button class="link" onclick={enable}>Re-authorize for write access</button>
+		{/if}
+	</p>
 
 	{#if msg}
 		<p class="ok">{msg}</p>
@@ -161,5 +170,28 @@
 	.bad {
 		color: var(--danger);
 		margin: 0;
+	}
+	.scopes {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
+		margin: 0;
+		color: var(--text-dim);
+		font-size: 12px;
+	}
+	.link {
+		background: none;
+		border: none;
+		padding: 0;
+		margin: 0;
+		color: var(--accent);
+		font-size: 12px;
+		text-decoration: underline;
+	}
+	.link:hover:not(:disabled) {
+		background: none;
+		border: none;
+		color: var(--accent);
 	}
 </style>

@@ -1,13 +1,12 @@
 <script lang="ts">
-	import { hierarchy, pack } from 'd3';
+	import { forceSimulation, forceLink, forceManyBody, forceX, forceY, forceCollide } from 'd3';
 	import type { GroupBy, Repo, SizeBy } from '$lib/types';
 	import {
 		store,
 		ui,
 		filteredRepos,
 		sortedStatuses,
-		statusById,
-		statusLabel
+		statusById
 	} from '$lib/state.svelte';
 	import { monthsSincePush } from '$lib/suggest';
 	import { orgOf } from '$lib/format';
@@ -19,56 +18,48 @@
 	let width = $state(800);
 	let height = $state(500);
 
-	interface PackDatum {
-		name: string;
-		value?: number;
-		repo?: Repo;
-		children?: PackDatum[];
-	}
-
 	interface MapNode {
 		id: string;
 		name: string;
 		repo?: Repo;
+		hub: boolean;
 		x: number;
 		y: number;
 		r: number;
-		depth: number;
-		color?: string;
-		px: number;
-		py: number;
+		color: string;
+	}
+
+	interface MapLine {
+		x1: number;
+		y1: number;
+		x2: number;
+		y2: number;
 	}
 
 	let nodes = $state<MapNode[]>([]);
+	let lines = $state<MapLine[]>([]);
 
-	function sizeOf(r: Repo): number {
-		return sizeBy === 'stars' ? Math.sqrt(r.stargazerCount + 1) : 1 / (monthsSincePush(r) / 3 + 1);
+	const hubNodes = $derived(nodes.filter((n): n is MapNode & { hub: true } => n.hub));
+	const leafNodes = $derived(
+		nodes.filter((n): n is MapNode & { repo: Repo } => !n.hub && !!n.repo)
+	);
+
+	function radiusOf(r: Repo): number {
+		if (sizeBy === 'stars') {
+			return Math.min(26, Math.max(7, 7 + 4.6 * Math.log10(r.stargazerCount + 1)));
+		}
+		const m = monthsSincePush(r);
+		return Math.min(26, Math.max(7, 7 + 20 / (1 + m)));
 	}
 
 	function statusColor(r: Repo): string {
 		const id = store.repos[String(r.databaseId)]?.status ?? 'todo';
-		return statusById(id)?.color ?? '#888';
+		return statusById(id)?.color ?? '#818b98';
 	}
 
-	interface LeafDatum {
-		name: string;
-		value: number;
-		repo: Repo;
-	}
-
-	function groupLeaves(group: (r: Repo) => string): PackDatum[] {
-		const buckets = new Map<string, Repo[]>();
-		for (const r of filteredRepos()) {
-			const g = group(r);
-			if (!buckets.has(g)) buckets.set(g, []);
-			buckets.get(g)?.push(r);
-		}
-		return [...buckets.entries()]
-			.map(([name, rs]) => ({
-				name,
-				children: rs.map((r): LeafDatum => ({ name: r.nameWithOwner, value: sizeOf(r), repo: r }))
-			}))
-			.sort((a, b) => b.children.length - a.children.length);
+	function groupOf(r: Repo): string | null {
+		if (groupBy === 'none') return null;
+		return groupBy === 'language' ? (r.primaryLanguage?.name ?? 'no language') : orgOf(r);
 	}
 
 	$effect(() => {
@@ -76,7 +67,7 @@
 		if (!el) return;
 		const set = () => {
 			width = el.clientWidth;
-			height = Math.max(340, Math.round(el.clientWidth * 0.62));
+			height = Math.max(380, Math.round(el.clientWidth * 0.58));
 		};
 		set();
 		const ro = new ResizeObserver(set);
@@ -84,48 +75,88 @@
 		return () => ro.disconnect();
 	});
 
+	// Deterministic layout: a few hundred fixed simulation ticks, no live timer,
+	// so the constellation is stable across renders and re-renders.
 	$effect(() => {
 		const w = width;
 		const h = height;
 		const list = filteredRepos();
 		if (list.length === 0) {
 			nodes = [];
+			lines = [];
 			return;
 		}
-		const children: PackDatum[] =
-			groupBy === 'none'
-				? list.map((r) => ({ name: r.nameWithOwner, value: sizeOf(r), repo: r }))
-				: groupBy === 'language'
-					? groupLeaves((r) => r.primaryLanguage?.name ?? 'no language')
-					: groupLeaves(orgOf);
 
-		const packed = pack<PackDatum>()
-			.size([w, h])
-			.padding(4)(hierarchy<PackDatum>({ name: 'repos', children }).sum((d) => d.value ?? 0));
+		const repoNodes: MapNode[] = list.map((r) => ({
+			id: `r:${r.databaseId}`,
+			name: r.name,
+			repo: r,
+			hub: false,
+			x: 0,
+			y: 0,
+			r: radiusOf(r),
+			color: statusColor(r)
+		}));
 
-		const flat: MapNode[] = [];
-		packed.each((d) => {
-			const data = d.data;
-			flat.push({
-				id: `${d.depth}:${data.name}`,
-				name: data.name,
-				repo: data.repo,
-				x: d.x,
-				y: d.y,
-				r: d.r,
-				depth: d.depth,
-				color: data.repo ? statusColor(data.repo) : undefined,
-				px: d.parent?.x ?? d.x,
-				py: d.parent?.y ?? d.y
-			});
+		const hubs: MapNode[] = [];
+		const members = new Map<string, MapNode[]>();
+		for (const n of repoNodes) {
+			const g = groupOf(n.repo!);
+			if (g === null) continue;
+			if (!members.has(g)) {
+				hubs.push({ id: `h:${g}`, name: g, hub: true, x: 0, y: 0, r: 1, color: '' });
+				members.set(g, []);
+			}
+			members.get(g)!.push(n);
+		}
+
+		interface LinkDatum {
+			source: string;
+			target: string;
+			distance: number;
+		}
+		const links: LinkDatum[] = hubs.flatMap((hub) => {
+			const ms = members.get(hub.name) ?? [];
+			return ms.map((m) => ({ source: m.id, target: hub.id, distance: m.r + 34 }));
 		});
-		nodes = flat;
-	});
 
-	const leafNodes = $derived(nodes.filter((n) => n.repo));
-	const groupNodes = $derived(nodes.filter((n) => !n.repo && n.depth > 0 && n.r >= 26));
-	const labelFor = (n: MapNode) =>
-		n.repo ? statusLabel(store.repos[String(n.repo.databaseId)]?.status ?? '') || 'unassigned' : '';
+		const simNodes: MapNode[] = [...hubs, ...repoNodes];
+		const sim = forceSimulation<MapNode>(simNodes)
+			.force(
+				'link',
+				forceLink<MapNode, LinkDatum>(links)
+					.id((d) => d.id)
+					.distance((d) => d.distance)
+			)
+			.force('charge', forceManyBody<MapNode>().strength((d) => (d.hub ? -260 : -30)))
+			.force('x', forceX<MapNode>(w / 2).strength((d) => (d.hub ? 0.12 : 0.05)))
+			.force('y', forceY<MapNode>(h / 2).strength((d) => (d.hub ? 0.12 : 0.05)))
+			.force('collide', forceCollide<MapNode>().radius((d) => d.r + 5).strength(0.85))
+			.alpha(0.5)
+			.alphaDecay(0.012)
+			.stop();
+		for (let i = 0; i < 400; i++) sim.tick();
+
+		const settled: MapNode[] = simNodes.map((n) => ({
+			id: n.id,
+			name: n.name,
+			repo: n.repo,
+			hub: n.hub,
+			x: Math.max(n.r + 22, Math.min(w - n.r - 22, n.x)),
+			y: Math.max(n.r + 22, Math.min(h - n.r - 22, n.y)),
+			r: n.r,
+			color: n.color
+		}));
+
+		const byId = new Map(settled.map((n) => [n.id, n]));
+		nodes = settled;
+		lines = links.flatMap((l) => {
+			const s = byId.get(l.source);
+			const t = byId.get(l.target);
+			if (!s || !t) return [];
+			return [{ x1: s.x, y1: s.y, x2: t.x, y2: t.y }];
+		});
+	});
 </script>
 
 <div class="wrap">
@@ -153,7 +184,7 @@
 	</div>
 
 	<div class="map" bind:this={root}>
-		{#if leafNodes.length === 0}
+		{#if nodes.length === 0}
 			<p class="none">No repos to map.</p>
 		{:else}
 			<svg
@@ -162,40 +193,41 @@
 				role="img"
 				aria-label="Repository status map"
 			>
-				{#each nodes as n (n.id)}
-					{#if n.repo}
-						<line class="link" x1={n.x} y1={n.y} x2={n.px} y2={n.py} stroke={n.color} />
-					{/if}
+				<defs>
+					<filter id="node-glow" x="-60%" y="-60%" width="220%" height="220%">
+						<feDropShadow dx="0" dy="1" stdDeviation="1.6" flood-color="rgba(31,35,40,0.35)" />
+					</filter>
+				</defs>
+				{#each lines as l (l.x1 + ':' + l.y1)}
+					<line class="link" x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} />
 				{/each}
-				{#each groupNodes as n (n.id)}
-					<circle class="group" cx={n.x} cy={n.y} r={n.r} />
+				{#each hubNodes as n (n.id)}
+					<g class="hub">
+						<circle cx={n.x} cy={n.y} r={3.5} />
+						<text class="hub-label" x={n.x + 10} y={n.y + 4}>{n.name}</text>
+					</g>
 				{/each}
 				{#each leafNodes as n (n.id)}
 					<g
 						class="bubble"
 						role="button"
 						tabindex="0"
-						onclick={() => n.repo && (ui.selectedRepo = n.repo)}
-						onkeydown={(e) => e.key === 'Enter' && n.repo && (ui.selectedRepo = n.repo)}
+						onclick={() => (ui.selectedRepo = n.repo)}
+						onkeydown={(e) => e.key === 'Enter' && (ui.selectedRepo = n.repo)}
+						transform={`translate(${n.x} ${n.y})`}
 					>
-						<circle
-							cx={n.x}
-							cy={n.y}
-							r={Math.max(n.r, 3)}
-							fill={n.color}
-							fill-opacity="0.82"
-							stroke={n.color}
-						>
-							<title>{n.name} · {labelFor(n)}</title>
-						</circle>
+						<circle class="node" r={n.r} fill={n.color} />
+						<text class="node-label" y={-n.r - 8}>{n.name}</text>
+						<title>{n.repo.nameWithOwner} · {n.name}</title>
 					</g>
-				{/each}
-				{#each groupNodes as n (n.id)}
-					<text class="label" x={n.x} y={n.y}>{n.name}</text>
 				{/each}
 			</svg>
 		{/if}
 	</div>
+	<p class="caption">
+		Each star is a repo, sized by {sizeBy === 'stars' ? 'stars' : 'how recently it was pushed'},
+		colored by status.
+	</p>
 </div>
 
 <style>
@@ -276,40 +308,63 @@
 	}
 	.canvas {
 		display: block;
+		width: 100%;
+		height: auto;
 		overflow: visible;
 	}
 	.link {
-		stroke-opacity: 0.28;
+		stroke: var(--border);
 		stroke-width: 1;
 	}
-	.group {
-		fill: none;
-		stroke: var(--text-dim);
-		stroke-opacity: 0.1;
-		stroke-width: 1;
-		stroke-dasharray: 2 3;
+	.hub circle {
+		fill: var(--text-dim);
+		opacity: 0.55;
+	}
+	.hub-label {
+		fill: var(--text-dim);
+		font-size: 12px;
+		font-weight: 600;
+		pointer-events: none;
+		user-select: none;
 	}
 	.bubble {
 		cursor: pointer;
 		outline: none;
 	}
-	.bubble:focus circle {
-		stroke-width: 3;
-		stroke-dasharray: 2 2;
+	.bubble .node {
+		stroke: var(--panel);
+		stroke-width: 2;
+		filter: url(#node-glow);
+		transform-box: fill-box;
+		transform-origin: center;
+		transition: transform 0.12s ease;
 	}
-	.label {
-		fill: var(--text-dim);
-		opacity: 0.65;
+	.bubble:hover .node,
+	.bubble:focus .node {
+		transform: scale(1.18);
+	}
+	.node-label {
+		fill: var(--text);
 		font-size: 11px;
+		font-weight: 500;
 		text-anchor: middle;
-		dominant-baseline: middle;
+		opacity: 0;
 		pointer-events: none;
-		user-select: none;
+		transition: opacity 0.12s ease;
+	}
+	.bubble:hover .node-label,
+	.bubble:focus .node-label {
+		opacity: 1;
 	}
 	.none {
 		margin: 0;
-		padding: 40px 0;
+		padding: 60px 0;
 		text-align: center;
 		color: var(--text-dim);
+	}
+	.caption {
+		margin: 0;
+		color: var(--text-dim);
+		font-size: 12px;
 	}
 </style>

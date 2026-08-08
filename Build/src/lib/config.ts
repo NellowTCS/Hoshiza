@@ -24,3 +24,9 @@ export const VERSION = pkg.version;
 export const READ_SCOPES = 'read:user public_repo read:org';
 /** Escalated scope needed to create the private sync repo and push state. */
 export const WRITE_SCOPES = 'repo';
+/** Union of all scopes, used when escalating to write access. GitHub issues
+ *  the token with exactly the requested scope set, so re-authorizing with
+ *  `repo` alone would strip the read scopes and break org/identity calls. */
+export const ALL_SCOPES = [
+	...new Set([...READ_SCOPES.split(' '), ...WRITE_SCOPES.split(' ')])
+].join(' ');

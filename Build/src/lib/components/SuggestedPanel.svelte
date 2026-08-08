@@ -7,20 +7,29 @@
 		suggestedFor,
 		ui
 	} from '$lib/state.svelte';
-	import { Sparkles, Check } from 'lucide-svelte';
+	import { suggestDismissed, dismissSuggestions } from '$lib/suggestDismiss.svelte';
+	import { Sparkles, Check, X } from 'lucide-svelte';
 
 	const items = $derived(suggestedRepos());
 </script>
 
-{#if items.length > 0}
+{#if !suggestDismissed.value && items.length > 0}
 	<section class="suggested">
 		<header class="head">
 			<Sparkles size={14} color="var(--accent)" />
 			<h2>Suggested</h2>
 			<span class="hint">from last-push activity</span>
-		<button class="primary apply-all" onclick={applyAllSuggestions}>
-			<Check size={12} /> Apply all
-		</button>
+			<button class="primary apply-all" onclick={applyAllSuggestions}>
+				<Check size={12} /> Apply all
+			</button>
+			<button
+				class="dismiss"
+				onclick={dismissSuggestions}
+				title="Hide suggestions"
+				aria-label="Hide suggestions"
+			>
+				<X size={14} />
+			</button>
 		</header>
 		<div class="row">
 			{#each items as repo (repo.databaseId)}
@@ -67,6 +76,23 @@
 		gap: 5px;
 		padding: 3px 10px;
 		font-size: 11.5px;
+	}
+	.dismiss {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: 1px solid transparent;
+		background: transparent;
+		color: var(--text-dim);
+		border-radius: var(--radius);
+	}
+	.dismiss:hover:not(:disabled) {
+		background: var(--btn-bg-hover);
+		border-color: var(--border);
+		color: var(--text);
 	}
 	.row {
 		display: flex;

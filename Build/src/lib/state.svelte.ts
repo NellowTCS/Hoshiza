@@ -1,6 +1,6 @@
 import type { AppState, Repo, RepoState, Status } from './types';
 import { replaceState } from '$app/navigation';
-import { gh, GhError, GhAuthError, fetchUser, fetchAllRepos } from './api';
+import { gh, GhError, GhAuthError, fetchSessionInfo, fetchAllRepos } from './api';
 import { suggestStatus } from './suggest';
 import { orgOf } from './format';
 
@@ -11,8 +11,8 @@ export const DATA_FILE = 'state.json';
 const FALLBACK_COLORS = ['#6a9fff', '#8a6d3b', '#2f6d5b', '#6b655c', '#484f58', '#c8452f'];
 
 export const DEFAULT_STATUSES: Status[] = [
-	{ id: 'todo', label: 'NEED TO DO', color: '#c8452f', order: 0 },
-	{ id: 'attention', label: 'Needs attention', color: '#8a6d3b', order: 1 },
+	{ id: 'todo', label: 'Future', color: '#07a8d0', order: 0 },
+	{ id: 'attention', label: 'Currently Working On', color: '#2ed558', order: 1 },
 	{ id: 'living', label: 'Living', color: '#3a5a8c', order: 2 },
 	{ id: 'done', label: 'Done', color: '#2f6d5b', order: 3 },
 	{ id: 'dropped', label: 'Dropped', color: '#6b655c', order: 4 },
@@ -92,10 +92,15 @@ export const store = $state<AppState>(loadLocal());
 
 export const session = $state<{
 	viewer: { login: string; name: string | null; avatar: string } | null;
+	// Scopes GitHub granted the current token, from the x-oauth-scopes header.
+	scopes: string[];
 	loading: boolean;
+	// True until init() has probed the session, so the first paint never
+	// flashes the sign-in screen at a returning user.
+	pending: boolean;
 	error: string | null;
 	signedIn: boolean;
-}>({ viewer: null, loading: false, error: null, signedIn: false });
+}>({ viewer: null, scopes: [], loading: false, pending: true, error: null, signedIn: false });
 
 export const ui = $state<{
 	view: 'board' | 'map';
@@ -109,8 +114,10 @@ export const repos = $state<Repo[]>([]);
 export const knownIds = $state<Record<string, boolean>>({});
 export const filters = $state({
 	query: '',
-	language: 'all',
-	org: 'all',
+	includedLanguages: [] as string[],
+	excludedLanguages: [] as string[],
+	includedOrgs: [] as string[],
+	excludedOrgs: [] as string[],
 	hideForks: false,
 	hideArchived: false
 });
@@ -411,8 +418,12 @@ export function vanishedIds(): string[] {
 export function filteredRepos(): Repo[] {
 	const q = filters.query.trim().toLowerCase();
 	return repos.filter((r) => {
-		if (filters.language !== 'all' && (r.primaryLanguage?.name ?? 'none') !== filters.language) return false;
-		if (filters.org !== 'all' && orgOf(r) !== filters.org) return false;
+		const lang = r.primaryLanguage?.name ?? 'none';
+		if (filters.excludedLanguages.includes(lang)) return false;
+		if (filters.includedLanguages.length && !filters.includedLanguages.includes(lang)) return false;
+		const org = orgOf(r);
+		if (filters.excludedOrgs.includes(org)) return false;
+		if (filters.includedOrgs.length && !filters.includedOrgs.includes(org)) return false;
 		if (filters.hideForks && r.isFork) return false;
 		if (filters.hideArchived && r.isArchived) return false;
 		if (q) {
@@ -479,11 +490,13 @@ function validateState(v: unknown): string | null {
 
 export async function init(): Promise<void> {
 	if (session.loading) return;
+	session.pending = false;
 	session.loading = true;
 	session.error = null;
 	try {
-		const user = await fetchUser();
+		const { user, scopes } = await fetchSessionInfo();
 		session.viewer = { login: user.login, name: user.name, avatar: user.avatar_url };
+		session.scopes = scopes;
 		session.signedIn = true;
 		await refreshRepos();
 		// Pick up changes from another device before the user starts editing.
@@ -493,6 +506,7 @@ export async function init(): Promise<void> {
 		if (e instanceof GhAuthError) {
 			session.signedIn = false;
 			session.viewer = null;
+			session.scopes = [];
 		} else {
 			session.error = e instanceof Error ? e.message : String(e);
 		}
@@ -507,6 +521,7 @@ export async function refreshRepos(): Promise<void> {
 
 export function signOut(): void {
 	session.viewer = null;
+	session.scopes = [];
 	session.signedIn = false;
 	repos.splice(0);
 	repoIndex.clear();
@@ -628,10 +643,25 @@ export async function pushToGitHub(): Promise<void> {
 	sync.error = null;
 }
 
+/** True for GitHub 403s caused by an insufficient token scope. */
+function isScopeError(e: unknown): boolean {
+	return e instanceof GhError && e.status === 403 && /scope/i.test(e.message);
+}
+
 export async function pullFromGitHub(): Promise<void> {
 	const login = session.viewer?.login;
 	if (!login) return;
-	await ensureDataRepo();
+	try {
+		await ensureDataRepo();
+	} catch (e) {
+		if (isScopeError(e)) {
+			store.storageMode = 'local';
+			saveLocal();
+			sync.error = 'GitHub sync needs the repo scope. Re-enable sync to re-authorize.';
+			return;
+		}
+		throw e;
+	}
 	const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
 	let res: ContentsResponse;
 	try {

@@ -153,7 +153,7 @@
 				See <code>Build/.env.example</code>.
 			</p>
 		</section>
-	{:else if session.loading}
+	{:else if session.pending || session.loading}
 		<p class="center">Pulling your repos from GitHub…</p>
 	{:else if session.error}
 		<section class="notice bad">
@@ -322,9 +322,7 @@
 		border-radius: 50%;
 	}
 	.content {
-		max-width: 1440px;
-		margin: 0 auto;
-		padding: 20px 20px 56px;
+		padding: 16px 16px 56px;
 	}
 	.center {
 		text-align: center;

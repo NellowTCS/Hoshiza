@@ -1,16 +1,21 @@
 <script lang="ts">
 	import { filters, languageOptions, orgOptions, filteredRepos, repos } from '$lib/state.svelte';
 	import { Search, X } from 'lucide-svelte';
+	import MultiSelect from './MultiSelect.svelte';
 
-	const languages = $derived(languageOptions());
-	const orgs = $derived(orgOptions());
+	const languages = $derived(
+		languageOptions().map((l) => ({ value: l, label: l === 'none' ? 'no language' : l }))
+	);
+	const orgs = $derived(orgOptions().map((o) => ({ value: o, label: o })));
 	const count = $derived(filteredRepos().length);
 	const total = $derived(repos.length);
 
 	function clear(): void {
 		filters.query = '';
-		filters.language = 'all';
-		filters.org = 'all';
+		filters.includedLanguages = [];
+		filters.excludedLanguages = [];
+		filters.includedOrgs = [];
+		filters.excludedOrgs = [];
 		filters.hideForks = false;
 		filters.hideArchived = false;
 	}
@@ -21,18 +26,18 @@
 		<span class="search-icon"><Search size={15} /></span>
 		<input class="search" type="search" placeholder="Search repos…" bind:value={filters.query} />
 	</div>
-	<select bind:value={filters.language} aria-label="Filter by language">
-		<option value="all">All languages</option>
-		{#each languages as l (l)}
-			<option value={l}>{l}</option>
-		{/each}
-	</select>
-	<select bind:value={filters.org} aria-label="Filter by owner">
-		<option value="all">All owners</option>
-		{#each orgs as o (o)}
-			<option value={o}>{o}</option>
-		{/each}
-	</select>
+	<MultiSelect
+		label="Languages"
+		options={languages}
+		bind:include={filters.includedLanguages}
+		bind:exclude={filters.excludedLanguages}
+	/>
+	<MultiSelect
+		label="Owners"
+		options={orgs}
+		bind:include={filters.includedOrgs}
+		bind:exclude={filters.excludedOrgs}
+	/>
 	<label class="toggle"><input type="checkbox" bind:checked={filters.hideForks} /> hide forks</label>
 	<label class="toggle"><input type="checkbox" bind:checked={filters.hideArchived} /> hide archived</label>
 	<span class="count">{count} / {total}</span>

@@ -23,18 +23,36 @@ export class GhError extends Error {
 	}
 }
 
-/**
- * Authenticated GitHub API call through the Worker proxy. The token lives only
- * in an httpOnly cookie; `credentials: "include"` ships it cross-origin.
- */
-export async function gh<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
+/** Response body plus the token scopes the worker forwarded from GitHub. */
+export interface GhMeta {
+	data: unknown;
+	scopes: string[];
+}
+
+/** Authenticated GitHub API call through the Worker proxy, including headers. */
+export async function ghWithMeta<T = unknown>(
+	path: string,
+	opts: RequestInit = {}
+): Promise<{ data: T; scopes: string[] }> {
 	const r = await fetch(`${WORKER_URL}/api/github?path=${encodeURIComponent(path)}`, {
 		...opts,
 		credentials: 'include'
 	});
 	if (r.status === 401) throw new GhAuthError();
 	if (!r.ok) throw new GhError(r.status, await apiMessage(r));
-	return (await r.json()) as T;
+	const scopes = (r.headers.get('x-oauth-scopes') ?? '')
+		.split(',')
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return { data: (await r.json()) as T, scopes };
+}
+
+/**
+ * Authenticated GitHub API call through the Worker proxy. The token lives only
+ * in an httpOnly cookie; `credentials: "include"` ships it cross-origin.
+ */
+export async function gh<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
+	return (await ghWithMeta<T>(path, opts)).data;
 }
 
 async function apiMessage(r: Response): Promise<string> {
@@ -58,8 +76,15 @@ export function logout(): void {
 	location.href = `${WORKER_URL}/logout?next=${encodeURIComponent('/')}&origin=${origin}`;
 }
 
-export async function fetchUser(): Promise<GitHubUser> {
-	return gh<GitHubUser>('/user');
+export interface SessionInfo {
+	user: GitHubUser;
+	scopes: string[];
+}
+
+/** Viewer profile plus the token's granted scopes, read off a single /user call. */
+export async function fetchSessionInfo(): Promise<SessionInfo> {
+	const meta = await ghWithMeta<GitHubUser>('/user');
+	return { user: meta.data, scopes: meta.scopes };
 }
 
 const REPO_FIELDS = `
@@ -69,43 +94,119 @@ const REPO_FIELDS = `
   parent { nameWithOwner url }
 `;
 
-interface RepoConnection {
-	data: {
-		viewer: {
-			repositories: {
-				pageInfo: { hasNextPage: boolean; endCursor: string };
-				nodes: Repo[];
-			};
+interface PageInfo {
+	hasNextPage: boolean;
+	endCursor: string | null;
+}
+
+interface ReposPayload {
+	[key: string]: {
+		repositories: {
+			pageInfo: PageInfo;
+			nodes: Repo[];
 		};
 	};
 }
 
+interface OrgPayload {
+	viewer: {
+		organizations: {
+			pageInfo: PageInfo;
+			nodes: { login: string }[];
+		};
+	};
+}
+
+interface GraphQLEnvelope<T> {
+	data?: T;
+	errors?: { message: string }[];
+}
+
 /**
- * Fetch every repo the viewer owns or belongs to, paging through the GraphQL
- * cursor. `affiliations:[OWNER,ORGANIZATION_MEMBER]` pulls org repos alongside
- * personal ones in a single query.
+ * GraphQL call against the worker proxy. GitHub returns HTTP 200 with an
+ * `errors` array (and no `data`) for scope, validation, and rate-limit
+ * failures, so those are turned into a thrown GhError here instead of
+ * letting callers trip over `undefined` data.
+ */
+async function post<T = unknown>(query: string, variables: Record<string, unknown>): Promise<T> {
+	const res = await gh<GraphQLEnvelope<T>>('/graphql', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ query, variables })
+	});
+	if (res.errors?.length) {
+		throw new GhError(200, res.errors.map((e) => e.message).join('; '));
+	}
+	if (res.data === undefined) throw new GhError(200, 'GraphQL response contained no data');
+	return res.data;
+}
+
+/** One page of repos for a given owner (`viewer` or an org login). */
+async function reposPage(
+	owner: string,
+	affiliations: string | null,
+	after: string | null
+): Promise<{ nodes: Repo[]; pageInfo: PageInfo }> {
+	const ownerSel = owner === 'viewer' ? 'viewer' : `organization(login:${JSON.stringify(owner)})`;
+	// Response keys use the field name, not the login: `viewer` or `organization`.
+	const dataKey = owner === 'viewer' ? 'viewer' : 'organization';
+	const aff = affiliations ? `, affiliations:[${affiliations}]` : '';
+	const query = `query($c:String){
+		${ownerSel} {
+			repositories(first:100, after:$c${aff}, orderBy:{field:PUSHED_AT, direction:DESC}) {
+				pageInfo { hasNextPage endCursor }
+				nodes { ${REPO_FIELDS} }
+			}
+		}
+	}`;
+	const res = await post<ReposPayload>(query, { c: after });
+	const ownerData = res[dataKey];
+	if (!ownerData) throw new GhError(200, `GraphQL response omitted "${owner}"`);
+	return ownerData.repositories;
+}
+
+/**
+ * Fetch every repo the viewer can see: their own, then one page set per org they
+ * belong to. The `viewer.repositories` connection with mixed affiliations silently
+ * omits repos from some orgs, so organizations are enumerated explicitly.
  */
 export async function fetchAllRepos(): Promise<Repo[]> {
-	const repos: Repo[] = [];
+	const byId = new Map<number, Repo>();
 	let cursor: string | null = null;
+	do {
+		const { nodes, pageInfo } = await reposPage('viewer', 'OWNER', cursor);
+		for (const r of nodes) byId.set(r.databaseId, r);
+		cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
+	} while (cursor);
+
+	const orgs: string[] = [];
+	cursor = null;
 	do {
 		const query = `query($c:String){
 			viewer {
-				repositories(first:100, after:$c, affiliations:[OWNER,ORGANIZATION_MEMBER],
-				             orderBy:{field:PUSHED_AT, direction:DESC}) {
+				organizations(first:100, after:$c) {
 					pageInfo { hasNextPage endCursor }
-					nodes { ${REPO_FIELDS} }
+					nodes { login }
 				}
 			}
 		}`;
-		const res: RepoConnection = await gh<RepoConnection>('/graphql', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ query, variables: { c: cursor } })
-		});
-		const conn = res.data.viewer.repositories;
-		repos.push(...conn.nodes);
-		cursor = conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null;
+		// Explicit annotation avoids a TS circular-inference quirk (TS7022)
+		// where `res` picks up type `any` inside this do/while.
+		const res: OrgPayload = await post(query, { c: cursor });
+		for (const o of res.viewer.organizations.nodes) orgs.push(o.login);
+		cursor = res.viewer.organizations.pageInfo.hasNextPage
+			? res.viewer.organizations.pageInfo.endCursor
+			: null;
 	} while (cursor);
-	return repos;
+
+	for (const login of orgs) {
+		cursor = null;
+		do {
+			const { nodes, pageInfo } = await reposPage(login, 'OWNER,ORGANIZATION_MEMBER', cursor);
+			for (const r of nodes) byId.set(r.databaseId, r);
+			cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
+		} while (cursor);
+	}
+
+	return [...byId.values()].sort((a, b) => +new Date(b.pushedAt) - +new Date(a.pushedAt));
 }
