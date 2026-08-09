@@ -251,4 +251,88 @@
 		align-self: flex-start;
 		color: var(--text-dim);
 	}
+	@media (max-width: 767px) {
+		.row {
+			display: grid;
+			grid-template-columns: 44px 1fr 44px;
+			grid-template-rows: 44px 44px;
+			gap: 8px;
+			padding: 8px;
+		}
+		/* Row 1: grip | label | remove */
+		.grip {
+			grid-column: 1;
+			grid-row: 1;
+			width: 44px;
+		}
+		.label {
+			grid-column: 2;
+			grid-row: 1;
+			width: 100%;
+			min-width: 0;
+		}
+		.remove {
+			grid-column: 3;
+			grid-row: 1;
+			width: 44px;
+		}
+		/* Row 2: color picker | order buttons | count */
+		.row input[type='color'] {
+			grid-column: 1;
+			grid-row: 2;
+			width: 44px;
+			padding: 0;
+			border: 1px solid var(--border);
+			border-radius: var(--radius);
+			cursor: pointer;
+		}
+		.order {
+			grid-column: 2;
+			grid-row: 2;
+			display: flex;
+			flex-direction: row;
+			gap: 4px;
+			align-items: center;
+			justify-content: flex-start;
+		}
+		.move {
+			width: 44px;
+			height: 44px;
+		}
+		.count {
+			grid-column: 3;
+			grid-row: 2;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+		.id {
+			display: none;
+		}
+
+		.add {
+			display: grid;
+			grid-template-columns: 1fr 44px;
+			gap: 8px;
+		}
+		.add input[type='text'] {
+			grid-column: 1;
+			width: 100%;
+			height: 44px;
+		}
+		.add input[type='color'] {
+			grid-column: 2;
+			grid-row: 1;
+			width: 44px;
+			height: 44px;
+			padding: 0;
+			border: 1px solid var(--border);
+			border-radius: var(--radius);
+			cursor: pointer;
+		}
+		.add button {
+			grid-column: 1 / -1;
+			height: 44px;
+		}
+	}
 </style>

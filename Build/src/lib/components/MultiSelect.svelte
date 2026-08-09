@@ -40,14 +40,14 @@
 		const onKey = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') open = false;
 		};
-		const onClick = (e: MouseEvent) => {
+		const onClick = (e: PointerEvent) => {
 			if (popEl && !popEl.contains(e.target as Node)) open = false;
 		};
 		window.addEventListener('keydown', onKey);
-		window.addEventListener('mousedown', onClick);
+		window.addEventListener('pointerdown', onClick);
 		return () => {
 			window.removeEventListener('keydown', onKey);
-			window.removeEventListener('mousedown', onClick);
+			window.removeEventListener('pointerdown', onClick);
 		};
 	});
 
@@ -243,5 +243,22 @@
 	.name.off {
 		color: var(--text-dim);
 		text-decoration: line-through;
+	}
+	@media (max-width: 767px) {
+		.pop {
+			position: fixed;
+			left: 12px;
+			right: 12px;
+			top: auto;
+			bottom: calc(var(--bnav-h) + 12px);
+			width: auto;
+			max-height: 55vh;
+			z-index: 60;
+		}
+		.trigger {
+			width: 100%;
+			justify-content: space-between;
+			padding: 9px 12px;
+		}
 	}
 </style>

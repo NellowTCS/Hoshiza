@@ -1,4 +1,6 @@
 :root {
+	--topbar-h: 56px;
+	--bnav-h: 0px;
 	--bg: #ffffff;
 	--bg-subtle: #f6f8fa;
 	--bg-inset: #f6f8fa;
@@ -89,6 +91,12 @@ html[data-theme='dark'] {
 	color-scheme: dark;
 }
 
+@media (max-width: 767px) {
+	:root {
+		--bnav-h: calc(54px + env(safe-area-inset-bottom));
+	}
+}
+
 * {
 	box-sizing: border-box;
 }
@@ -97,6 +105,7 @@ html,
 body {
 	margin: 0;
 	padding: 0;
+	-webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -130,6 +139,15 @@ button {
 		background-color 0.12s ease,
 		border-color 0.12s ease,
 		color 0.12s ease;
+}
+
+button,
+a,
+input,
+select,
+textarea,
+label {
+	touch-action: manipulation;
 }
 
 button:hover:not(:disabled) {
@@ -264,4 +282,41 @@ code {
 		animation-iteration-count: 1 !important;
 		transition-duration: 0.01ms !important;
 	}
+}
+
+@media (pointer: coarse) {
+	button {
+		min-height: 40px;
+	}
+	input[type='text'],
+	input[type='search'],
+	input[type='color'],
+	select,
+	textarea {
+		padding-top: 9px;
+		padding-bottom: 9px;
+	}
+}
+
+@media (max-width: 767px) {
+	/* Keep inputs above iOS's 16px auto-zoom threshold. */
+	input,
+	select,
+	textarea {
+		font-size: 16px;
+	}
+}
+
+body.hoshiza-dragging,
+body.hoshiza-dragging * {
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+body.hoshiza-dragging * {
+	cursor: grabbing;
+}
+
+body.hoshiza-dragging .card {
+	transition: none;
 }

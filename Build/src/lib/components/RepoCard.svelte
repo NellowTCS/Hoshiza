@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Repo } from '$lib/types';
 	import { store, ui, statusLabel, suggestedFor } from '$lib/state.svelte';
+	import { longPressDrag, drag } from '$lib/boardDrag.svelte';
 	import { formatStars, timeAgo, orgOf } from '$lib/format';
 	import { Star, Lock, GitFork, Archive, Sparkles, FileText } from 'lucide-svelte';
 
@@ -18,12 +19,14 @@
 <div
 	class="card"
 	class:dragging
+	class:origin={drag.repoId === key}
 	class:needs={needsSuggestion}
 	draggable="true"
 	data-card-id={repo.databaseId}
 	tabindex="0"
 	role="button"
 	aria-label={repo.nameWithOwner}
+	use:longPressDrag
 	ondragstart={(e) => {
 		dragging = true;
 		e.dataTransfer?.setData('text/plain', String(repo.databaseId));
@@ -93,6 +96,9 @@
 		box-shadow: var(--shadow-sm);
 		cursor: grab;
 		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
+		touch-action: manipulation;
 	}
 	.card:hover {
 		border-color: var(--border-strong);
@@ -104,8 +110,11 @@
 		opacity: 0.45;
 		box-shadow: var(--shadow-md);
 	}
+	.card.origin {
+		opacity: 0.4;
+	}
 	.card.needs {
-		box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
+		border-color: var(--accent);
 	}
 	.head {
 		display: flex;
@@ -160,5 +169,10 @@
 		width: 8px;
 		height: 8px;
 		border-radius: 50%;
+	}
+	@media (max-width: 767px) {
+		.card {
+			padding: 12px 14px;
+		}
 	}
 </style>

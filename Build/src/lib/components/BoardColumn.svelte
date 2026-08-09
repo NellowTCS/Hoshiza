@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import type { Repo, Status } from '$lib/types';
 	import { moveRepo } from '$lib/state.svelte';
+	import { drag } from '$lib/boardDrag.svelte';
 	import RepoCard from './RepoCard.svelte';
 
 	let { status, repos }: { status: Status; repos: Repo[] } = $props();
@@ -74,6 +75,8 @@
 	bind:this={root}
 	class="col"
 	class:dragover={dragOver}
+	class:touch-target={drag.repoId !== null && drag.overStatus === status.id}
+	data-status={status.id}
 	role="region"
 	aria-label={`${status.label} column drop zone`}
 	ondragover={(e) => {
@@ -96,8 +99,14 @@
 		ondragover={onListDragOver}
 		ondragleave={() => (vSpeed = 0)}
 	>
-		{#each repos as repo (repo.databaseId)}
+		{#each repos as repo, i (repo.databaseId)}
+			{#if drag.overStatus === status.id && drag.overIndex === i}
+				<div class="insert" aria-hidden="true"></div>
+			{/if}
 			<RepoCard {repo} />
+			{#if drag.overStatus === status.id && drag.overIndex === i + 1}
+				<div class="insert" aria-hidden="true"></div>
+			{/if}
 		{/each}
 		{#if repos.length === 0}
 			<p class="empty">nothing here</p>
@@ -116,6 +125,10 @@
 		transition: border-color 0.1s;
 	}
 	.col.dragover {
+		border-color: var(--accent);
+		box-shadow: inset 0 0 0 1px var(--accent);
+	}
+	.col.touch-target {
 		border-color: var(--accent);
 		box-shadow: inset 0 0 0 1px var(--accent);
 	}
@@ -160,5 +173,12 @@
 		margin: auto;
 		color: var(--text-dim);
 		font-size: 12px;
+	}
+	.insert {
+		flex: none;
+		height: 2px;
+		margin: -3px 0;
+		border-radius: 2px;
+		background: var(--accent);
 	}
 </style>

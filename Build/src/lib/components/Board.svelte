@@ -3,6 +3,8 @@
 	import { sortedStatuses, filteredRepos, store, session, vanishedIds } from '$lib/state.svelte';
 	import { suggestDismissed, showSuggestions } from '$lib/suggestDismiss.svelte';
 	import { login } from '$lib/api';
+	import { drag } from '$lib/boardDrag.svelte';
+	import { orgOf } from '$lib/format';
 	import BoardColumn from './BoardColumn.svelte';
 	import SuggestedPanel from './SuggestedPanel.svelte';
 	import { Info } from 'lucide-svelte';
@@ -21,6 +23,13 @@
 	);
 	const vanished = $derived(vanishedIds());
 	const hasRepoScope = $derived(session.scopes.includes('repo'));
+
+	// The lifted card shown under the touch pointer during a long-press drag.
+	const ghost = $derived(
+		drag.repoId
+			? filteredRepos().find((r) => String(r.databaseId) === drag.repoId)
+			: null
+	);
 
 	// Horizontal auto-scroll: while a card is dragged near the board's edge, the
 	// column row scrolls so the card can reach columns off-screen.
@@ -94,6 +103,16 @@
 	{/each}
 </div>
 
+{#if ghost}
+	<div
+		class="ghost"
+		style={`transform: translate(${drag.clientX - drag.width / 2}px, ${Math.max(8, drag.clientY - drag.height - 14)}px); width: ${drag.width}px`}
+	>
+		<span class="ghost-name">{ghost.name}</span>
+		<span class="ghost-owner">{orgOf(ghost)}</span>
+	</div>
+{/if}
+
 <style>
 	.cols {
 		flex: 1;
@@ -102,11 +121,53 @@
 		overflow-x: auto;
 		min-height: 0;
 		padding-bottom: 8px;
+		scroll-snap-type: x proximity;
+		overscroll-behavior-x: contain;
 	}
 	.cols :global(.col) {
 		flex: 1 1 0;
 		min-width: 264px;
 		max-width: 340px;
+		scroll-snap-align: start;
+	}
+	@media (max-width: 767px) {
+		.cols {
+			padding-right: 12px;
+		}
+		.cols :global(.col) {
+			flex: 0 0 82%;
+			min-width: 0;
+			max-width: 82%;
+		}
+	}
+	.ghost {
+		position: fixed;
+		top: 0;
+		left: 0;
+		z-index: 100;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 12px 14px;
+		background: var(--panel);
+		border: 1px solid var(--accent);
+		border-radius: var(--radius);
+		box-shadow: var(--shadow-lg);
+		pointer-events: none;
+		will-change: transform;
+	}
+	.ghost-name {
+		min-width: 0;
+		font-weight: 600;
+		font-size: 13.5px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.ghost-owner {
+		flex: none;
+		color: var(--text-dim);
+		font-size: 11.5px;
 	}
 	.vanished {
 		display: flex;

@@ -219,4 +219,36 @@
 		width: 100%;
 		resize: vertical;
 	}
+	@media (max-width: 767px) {
+		.top {
+			flex-direction: column;
+			gap: 12px;
+		}
+		.name {
+			font-size: 18px;
+			overflow-wrap: anywhere;
+		}
+		.open {
+			width: 100%;
+			justify-content: center;
+			padding: 10px 16px;
+			border: 1px solid var(--border);
+			border-radius: var(--radius);
+			text-decoration: none;
+		}
+		.status-chip {
+			padding: 9px 14px;
+			font-size: 13px;
+		}
+		.tag {
+			padding: 6px 12px;
+			font-size: 12.5px;
+		}
+		.tag-add button {
+			padding: 10px 16px;
+		}
+		textarea {
+			min-height: 96px;
+		}
+	}
 </style>

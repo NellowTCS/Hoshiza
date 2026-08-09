@@ -2,7 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { Network } from 'vis-network';
 	import type { Node as VisNode, Edge as VisEdge, Options } from 'vis-network';
-	import type { GroupBy, Repo, SizeBy } from '$lib/types';
+	import type { Repo } from '$lib/types';
 	import {
 		store,
 		ui,
@@ -10,6 +10,7 @@
 		sortedStatuses,
 		statusById
 	} from '$lib/state.svelte';
+	import { mapOptions } from '$lib/mapOptions.svelte';
 	import { monthsSincePush } from '$lib/suggest';
 	import { formatStars, orgOf, timeAgo } from '$lib/format';
 	import { theme } from '$lib/theme.svelte';
@@ -17,10 +18,6 @@
 	const REPO_ID = 'r:';
 	const HUB_ID = 'h:';
 
-	let groupBy = $state<GroupBy>('language');
-	let sizeBy = $state<SizeBy>('stars');
-
-	let mapEl: HTMLDivElement;
 	let netEl = $state<HTMLDivElement>();
 	let network: Network | undefined;
 
@@ -33,7 +30,7 @@
 	}
 
 	function radiusOf(r: Repo): number {
-		if (sizeBy === 'stars') {
+		if (mapOptions.sizeBy === 'stars') {
 			return Math.min(40, Math.max(15, 15 + 6 * Math.log10(r.stargazerCount + 1)));
 		}
 		const m = monthsSincePush(r);
@@ -46,28 +43,16 @@
 	}
 
 	function groupOf(r: Repo): string | null {
-		if (groupBy === 'none') return null;
-		return groupBy === 'language' ? (r.primaryLanguage?.name ?? 'no language') : orgOf(r);
+		if (mapOptions.groupBy === 'none') return null;
+		return mapOptions.groupBy === 'language'
+			? (r.primaryLanguage?.name ?? 'no language')
+			: orgOf(r);
 	}
 
 	function destroyNetwork(): void {
 		network?.destroy();
 		network = undefined;
 	}
-
-	$effect(() => {
-		const el = mapEl;
-		if (!el) return;
-		const set = () => {
-			if (netEl) {
-				netEl.style.height = `${Math.max(380, Math.round(el.clientWidth * 0.58))}px`;
-			}
-		};
-		set();
-		const ro = new ResizeObserver(set);
-		ro.observe(el);
-		return () => ro.disconnect();
-	});
 
 	function build(): void {
 		if (!netEl) return;
@@ -215,8 +200,8 @@
 
 	$effect(() => {
 		theme.value;
-		groupBy;
-		sizeBy;
+		mapOptions.groupBy;
+		mapOptions.sizeBy;
 		const hasRepos = list.length > 0;
 		if (!hasRepos) {
 			destroyNetwork();
@@ -229,30 +214,13 @@
 </script>
 
 <div class="wrap">
-	<div class="controls">
-		<span class="ctl">
-			<span class="k">group by</span>
-			<span class="seg">
-				<button class:on={groupBy === 'language'} onclick={() => (groupBy = 'language')}>language</button>
-				<button class:on={groupBy === 'org'} onclick={() => (groupBy = 'org')}>org</button>
-				<button class:on={groupBy === 'none'} onclick={() => (groupBy = 'none')}>none</button>
-			</span>
-		</span>
-		<span class="ctl">
-			<span class="k">size by</span>
-			<span class="seg">
-				<button class:on={sizeBy === 'stars'} onclick={() => (sizeBy = 'stars')}>stars</button>
-				<button class:on={sizeBy === 'recency'} onclick={() => (sizeBy = 'recency')}>recency</button>
-			</span>
-		</span>
-		<span class="legend">
-			{#each sortedStatuses() as s (s.id)}
-				<span class="leg"><i style={`background: ${s.color}`}></i>{s.label}</span>
-			{/each}
-		</span>
-	</div>
+	<span class="legend">
+		{#each sortedStatuses() as s (s.id)}
+			<span class="leg"><i style={`background: ${s.color}`}></i>{s.label}</span>
+		{/each}
+	</span>
 
-	<div class="map" bind:this={mapEl}>
+	<div class="map">
 		{#if list.length === 0}
 			<p class="none">No repos to map.</p>
 		{:else}
@@ -260,65 +228,20 @@
 		{/if}
 	</div>
 	<p class="caption">
-		Each star is a repo, sized by {sizeBy === 'stars' ? 'stars' : 'how recently it was pushed'},
+		Each star is a repo, sized by {mapOptions.sizeBy === 'stars' ? 'stars' : 'how recently it was pushed'},
 		colored by status.
 	</p>
 </div>
 
 <style>
 	.wrap {
+		flex: 1;
+		min-height: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
 	}
-	.controls {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 16px;
-		padding: 10px 14px;
-		background: var(--panel);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-	}
-	.ctl {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-	}
-	.k {
-		color: var(--text-dim);
-		font-size: 12px;
-	}
-	.seg {
-		display: inline-flex;
-		gap: 2px;
-		padding: 3px;
-		background: var(--bg-subtle);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-	}
-	.ctl button {
-		padding: 4px 10px;
-		font-size: 12px;
-		border: 1px solid transparent;
-		border-radius: 4px;
-		background: transparent;
-		color: var(--text-dim);
-	}
-	.ctl button:hover:not(:disabled) {
-		background: transparent;
-		border-color: transparent;
-		color: var(--text);
-	}
-	.ctl button.on {
-		background: var(--panel);
-		border-color: var(--border);
-		color: var(--text);
-		box-shadow: var(--shadow-sm);
-	}
 	.legend {
-		margin-left: auto;
 		display: flex;
 		flex-wrap: wrap;
 		gap: 10px;
@@ -336,12 +259,18 @@
 		border-radius: 50%;
 	}
 	.map {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
 		background: var(--panel);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		padding: 6px;
 	}
 	.net {
+		flex: 1;
+		min-height: 0;
 		position: relative;
 		user-select: none;
 	}

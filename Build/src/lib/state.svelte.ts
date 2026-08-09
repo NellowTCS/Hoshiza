@@ -529,6 +529,15 @@ export function importJson(text: string): string | null {
 	return null;
 }
 
+/** Read an uploaded state file and import it. Returns an error message or null. */
+export async function importFile(file: File): Promise<string | null> {
+	try {
+		return importJson(await file.text());
+	} catch {
+		return 'Could not read file.';
+	}
+}
+
 function validateState(v: unknown): string | null {
 	if (typeof v !== 'object' || v === null) return 'state must be a JSON object';
 	const s = v as Partial<AppState>;

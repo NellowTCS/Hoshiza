@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { isConfigured } from '$lib/config';
-	import { init, session, ui, repos, store, sync, exportJson, importJson } from '$lib/state.svelte';
+	import { init, session, ui, repos, store, sync, exportJson, importFile } from '$lib/state.svelte';
 	import { initTheme, toggleTheme, theme } from '$lib/theme.svelte';
 	import { logout } from '$lib/api';
 	import { Columns3, Map, Settings2, RefreshCw, Download, Upload, LogOut, Sun, Moon, Loader2, CloudUpload } from 'lucide-svelte';
@@ -14,6 +14,7 @@
 	import StatusEditor from '$lib/components/StatusEditor.svelte';
 	import SyncPanel from '$lib/components/SyncPanel.svelte';
 	import RepoDetail from '$lib/components/RepoDetail.svelte';
+	import BottomNav from '$lib/components/BottomNav.svelte';
 
 	let importInput = $state<HTMLInputElement>();
 	let importError = $state<string | null>(null);
@@ -38,13 +39,7 @@
 		const input = e.currentTarget as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
-		file
-			.text()
-			.then((text) => {
-				const err = importJson(text);
-				importError = err ? `Import failed: ${err}` : 'Imported.';
-			})
-			.catch(() => (importError = 'Could not read file.'));
+		importFile(file).then((err) => (importError = err ? `Import failed: ${err}` : 'Imported.'));
 		input.value = '';
 	}
 </script>
@@ -56,7 +51,7 @@
 <header class="topbar">
 	<div class="brand">
 		<img class="logo" src={favicon} alt="" />
-		<h1>Hoshiza</h1>
+		<h1 class="wordmark">Hoshiza</h1>
 	</div>
 	{#if session.signedIn}
 		<nav class="tabs" aria-label="Views">
@@ -96,6 +91,15 @@
 						{/if}
 					</span>
 				</button>
+			{:else}
+				<button
+					class="icon-btn"
+					onclick={() => (ui.showSync = true)}
+					title="Sync"
+					aria-label="Sync"
+				>
+					<RefreshCw size={16} />
+				</button>
 			{/if}
 			<button
 				class="icon-btn"
@@ -106,15 +110,7 @@
 				<Settings2 size={16} />
 			</button>
 			<button
-				class="icon-btn"
-				onclick={() => (ui.showSync = true)}
-				title="Sync"
-				aria-label="Sync"
-			>
-				<RefreshCw size={16} />
-			</button>
-			<button
-				class="icon-btn"
+				class="icon-btn desktop-only"
 				onclick={exportJson}
 				title="Export state"
 				aria-label="Export state"
@@ -122,7 +118,7 @@
 				<Download size={16} />
 			</button>
 			<button
-				class="icon-btn"
+				class="icon-btn desktop-only"
 				onclick={() => importInput?.click()}
 				title="Import state"
 				aria-label="Import state"
@@ -139,7 +135,7 @@
 			{#if session.viewer}
 				<div class="user" title={session.viewer.login}>
 					<img src={session.viewer.avatar} alt="" />
-					<span>{session.viewer.name ?? session.viewer.login}</span>
+					<span class="uname">{session.viewer.name ?? session.viewer.login}</span>
 				</div>
 			{/if}
 			<button
@@ -166,7 +162,7 @@
 	</div>
 </header>
 
-<main class="content" class:board={boardReady}>
+<main class="content" class:board={boardReady} class:map={ui.view === 'map'}>
 	{#if !isConfigured}
 		<section class="notice">
 			<h2>Not configured yet</h2>
@@ -210,6 +206,10 @@
 	{/if}
 </main>
 
+{#if session.signedIn}
+	<BottomNav />
+{/if}
+
 {#if ui.showStatuses}
 	<Modal title="Statuses" onclose={() => (ui.showStatuses = false)}>
 		<StatusEditor />
@@ -236,8 +236,8 @@
 		display: flex;
 		align-items: center;
 		gap: 16px;
-		height: 56px;
-		padding: 0 20px;
+		height: calc(var(--topbar-h) + env(safe-area-inset-top));
+		padding: env(safe-area-inset-top) 20px 0;
 		background: var(--topbar);
 		backdrop-filter: blur(8px);
 		border-bottom: 1px solid var(--border-muted);
@@ -361,14 +361,39 @@
 		border-radius: 50%;
 	}
 	.content {
-		padding: 16px 16px 56px;
+		padding: 16px 16px calc(56px + var(--bnav-h));
 	}
-	.content.board {
+	.content.board,
+	.content.map {
 		display: flex;
 		flex-direction: column;
-		height: calc(100vh - 56px);
+		height: calc(100vh - var(--topbar-h) - env(safe-area-inset-top) - var(--bnav-h));
 		min-height: 0;
 		padding: 16px 16px 0;
+	}
+	@supports (height: 100dvh) {
+		.content.board,
+		.content.map {
+			height: calc(100dvh - var(--topbar-h) - env(safe-area-inset-top) - var(--bnav-h));
+		}
+	}
+	@media (max-width: 767px) {
+		.content.board,
+		.content.map {
+			padding: 12px 12px 0;
+		}
+		.tabs,
+		.desktop-only {
+			display: none;
+		}
+		.uname {
+			display: none;
+		}
+	}
+	@media (max-width: 420px) {
+		.wordmark {
+			display: none;
+		}
 	}
 	.center {
 		text-align: center;
@@ -405,7 +430,7 @@
 	}
 	.toast {
 		position: fixed;
-		bottom: 20px;
+		bottom: calc(20px + var(--bnav-h));
 		left: 50%;
 		transform: translateX(-50%);
 		z-index: 60;

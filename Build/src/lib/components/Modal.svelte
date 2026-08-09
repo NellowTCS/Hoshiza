@@ -23,6 +23,7 @@
 	}}
 >
 	<div class="modal" role="dialog" aria-modal="true" aria-label={title}>
+		<span class="handle" aria-hidden="true"></span>
 		<header class="head">
 			<h2>{title}</h2>
 			<button class="close" onclick={onclose} aria-label="Close">
@@ -65,6 +66,9 @@
 		padding: 16px 24px;
 		border-bottom: 1px solid var(--border-muted);
 	}
+	.handle {
+		display: none;
+	}
 	.head h2 {
 		margin: 0;
 		font-size: 16px;
@@ -92,6 +96,42 @@
 		from {
 			transform: translateY(6px) scale(0.99);
 			opacity: 0;
+		}
+	}
+	@keyframes sheet {
+		from {
+			transform: translateY(32px);
+			opacity: 0;
+		}
+	}
+	@media (max-width: 767px) {
+		.overlay {
+			display: flex;
+			align-items: flex-end;
+			justify-content: center;
+			padding: 0;
+		}
+		.modal {
+			width: 100%;
+			max-height: min(88dvh, 88vh);
+			border-radius: 16px 16px 0 0;
+			animation: sheet 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+		}
+		.handle {
+			display: block;
+			flex: none;
+			width: 40px;
+			height: 4px;
+			margin: 8px auto 0;
+			border-radius: 2px;
+			background: var(--border);
+		}
+		.head {
+			padding: 12px 20px 16px;
+		}
+		.body {
+			padding: 20px;
+			padding-bottom: calc(24px + env(safe-area-inset-bottom));
 		}
 	}
 </style>

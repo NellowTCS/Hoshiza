@@ -64,4 +64,14 @@
 		font-size: 12.5px;
 		line-height: 1.5;
 	}
+	@media (max-width: 767px) {
+		.signin {
+			margin: 8vh 16px 0;
+			padding: 32px 20px;
+		}
+		.primary {
+			width: 100%;
+			padding: 12px 18px;
+		}
+	}
 </style>

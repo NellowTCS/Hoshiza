@@ -1,12 +1,23 @@
 <script lang="ts">
-	import { store, session, sync, pushToGitHub, pullFromGitHub, disableGithubSync } from '$lib/state.svelte';
+	import { store, session, sync, pushToGitHub, pullFromGitHub, disableGithubSync, exportJson, importFile } from '$lib/state.svelte';
 	import { login } from '$lib/api';
 	import { DATA_REPO } from '$lib/state.svelte';
-	import { CloudUpload, CloudDownload, Loader2, X } from 'lucide-svelte';
+	import { CloudUpload, CloudDownload, Loader2, X, Download, Upload } from 'lucide-svelte';
 
 	let busy = $state(false);
 	let msg = $state('');
 	let err = $state('');
+	let importMsg = $state('');
+	let fileInput = $state<HTMLInputElement>();
+
+	async function onImport(e: Event): Promise<void> {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		const error = await importFile(file);
+		importMsg = error ? `Import failed: ${error}` : 'Imported.';
+		input.value = '';
+	}
 
 	const dataRepoUrl = $derived(
 		session.viewer ? `https://github.com/${session.viewer.login}/${DATA_REPO}` : null
@@ -107,6 +118,24 @@
 	{#if err}
 		<p class="bad">{err}</p>
 	{/if}
+
+	<div class="backup">
+		<p class="b-title">
+			<Download size={13} /> Local backup
+		</p>
+		<div class="row">
+			<button onclick={exportJson} disabled={busy}>
+				<Download size={14} /> Export
+			</button>
+			<button onclick={() => fileInput?.click()} disabled={busy}>
+				<Upload size={14} /> Import
+			</button>
+			<input bind:this={fileInput} type="file" accept="application/json,.json" hidden onchange={onImport} />
+		</div>
+		{#if importMsg}
+			<p class="ok">{importMsg}</p>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -212,5 +241,23 @@
 		background: none;
 		border: none;
 		color: var(--accent);
+	}
+	.backup {
+		display: none;
+	}
+	.b-title {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin: 0 0 8px;
+		font-size: 12px;
+		font-weight: 600;
+	}
+	@media (max-width: 767px) {
+		.backup {
+			display: block;
+			padding-top: 14px;
+			border-top: 1px solid var(--border-muted);
+		}
 	}
 </style>
