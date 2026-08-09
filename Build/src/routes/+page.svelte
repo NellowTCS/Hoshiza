@@ -18,6 +18,16 @@
 	let importInput = $state<HTMLInputElement>();
 	let importError = $state<string | null>(null);
 
+	/** True when the board/map fills the viewport; column lists scroll internally. */
+	const boardReady = $derived(
+		isConfigured &&
+			!session.pending &&
+			!session.loading &&
+			!session.error &&
+			session.signedIn &&
+			repos.length > 0
+	);
+
 	onMount(() => {
 		initTheme();
 		if (!isConfigured) return;
@@ -156,7 +166,7 @@
 	</div>
 </header>
 
-<main class="content">
+<main class="content" class:board={boardReady}>
 	{#if !isConfigured}
 		<section class="notice">
 			<h2>Not configured yet</h2>
@@ -352,6 +362,13 @@
 	}
 	.content {
 		padding: 16px 16px 56px;
+	}
+	.content.board {
+		display: flex;
+		flex-direction: column;
+		height: calc(100vh - 56px);
+		min-height: 0;
+		padding: 16px 16px 0;
 	}
 	.center {
 		text-align: center;

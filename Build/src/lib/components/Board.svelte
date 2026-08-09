@@ -96,17 +96,17 @@
 
 <style>
 	.cols {
+		flex: 1;
 		display: flex;
 		gap: 12px;
 		overflow-x: auto;
+		min-height: 0;
 		padding-bottom: 8px;
 	}
 	.cols :global(.col) {
 		flex: 1 1 0;
 		min-width: 264px;
 		max-width: 340px;
-		min-height: 56vh;
-		max-height: 78vh;
 	}
 	.vanished {
 		display: flex;
