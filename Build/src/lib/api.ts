@@ -1,8 +1,11 @@
 import type { GitHubUser, Repo } from './types';
 import { WORKER_URL, READ_SCOPES } from './config';
+import { base } from '$app/paths';
 
-/** App base path baked in by Vite (`/Hoshiza` in production, empty in dev). */
-const APP_BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+/**
+ * App base path (`/Hoshiza` in production, empty in dev).
+ */
+const APP_BASE = base;
 
 /** Thrown when the worker has no valid session (missing/expired cookie). */
 export class GhAuthError extends Error {
