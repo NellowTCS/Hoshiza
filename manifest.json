@@ -1,21 +1,21 @@
 {
   "app": "Hoshiza",
   "mode": "commit",
-  "latest": "1fc66c2eb22373792a09251a9c3e76f77516eee2",
+  "latest": "eea94bf986a39ba8c140e14dbce83e20ba41b67c",
   "files": [
     "404.html",
     "_app/immutable/assets/0.CH4i1Clo.css",
-    "_app/immutable/assets/2.BmSA9USf.css",
+    "_app/immutable/assets/2.ZOPRotZh.css",
     "_app/immutable/chunks/Bjy-W4x2.js",
-    "_app/immutable/chunks/BlIZo5mV.js",
-    "_app/immutable/chunks/CYGL-xtb.js",
+    "_app/immutable/chunks/CJNlAOn2.js",
+    "_app/immutable/chunks/GkvIaaTL.js",
     "_app/immutable/chunks/pPkL4D5w.js",
     "_app/immutable/chunks/xihTtKlq.js",
-    "_app/immutable/entry/app.DZVN1uBo.js",
-    "_app/immutable/entry/start.BPWGyFUR.js",
-    "_app/immutable/nodes/0.DFs1xcLb.js",
-    "_app/immutable/nodes/1.DVsCalMG.js",
-    "_app/immutable/nodes/2.C9tsFc9q.js",
+    "_app/immutable/entry/app.BsHlMQR8.js",
+    "_app/immutable/entry/start.B2fvs5Yc.js",
+    "_app/immutable/nodes/0.dcJsH3Kl.js",
+    "_app/immutable/nodes/1.1xbqb4_3.js",
+    "_app/immutable/nodes/2.UitP9lfK.js",
     "_app/version.json",
     "apple-touch-icon-180x180.png",
     "favicon.ico",
@@ -31,5 +31,5 @@
     "sw.js",
     "workbox-9c191d2f.js"
   ],
-  "timestamp": 1786240662
+  "timestamp": 1786432027
 }
