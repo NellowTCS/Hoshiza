@@ -27,6 +27,8 @@ export interface Status {
 
 /** Per-repo assignment. Keyed by String(databaseId) in AppState.repos. */
 export interface RepoState {
+	/** nameWithOwner, so vanished repos can still be shown by name. */
+	name: string;
 	status: string;
 	tags: string[];
 	note: string;

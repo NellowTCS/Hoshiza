@@ -80,6 +80,7 @@ function sanitizeRepos(repos: unknown, statuses: unknown): Record<string, RepoSt
 		if (typeof v !== 'object' || v === null) continue;
 		const r = v as Partial<RepoState>;
 		out[k] = {
+			name: typeof r.name === 'string' ? r.name : '',
 			status: typeof r.status === 'string' && valid.has(r.status) ? r.status : fallback,
 			tags: Array.isArray(r.tags) ? r.tags.filter((t): t is string => typeof t === 'string') : [],
 			note: typeof r.note === 'string' ? r.note : '',
@@ -406,7 +407,13 @@ export function suggestedFor(repo: Repo): string {
 export function applySuggestion(repo: Repo): void {
 	const key = String(repo.databaseId);
 	if (!store.repos[key]) {
-		store.repos[key] = { status: suggestStatus(repo), tags: [], note: '', order: 0 };
+		store.repos[key] = {
+			name: repo.nameWithOwner,
+			status: suggestStatus(repo),
+			tags: [],
+			note: '',
+			order: 0
+		};
 		renumberColumn(store.repos[key].status);
 		saveLocal();
 		return;
@@ -448,8 +455,17 @@ export function mergeRepos(fetched: Repo[], complete = true): void {
 		repoIndex.set(r.databaseId, r);
 		const key = String(r.databaseId);
 		seen[key] = true;
-		if (!store.repos[key]) {
-			store.repos[key] = { status: suggestStatus(r), tags: [], note: '', order: 0 };
+		if (store.repos[key]) {
+			// Backfill names for entries written before names were persisted.
+			if (!store.repos[key].name) store.repos[key].name = r.nameWithOwner;
+		} else {
+			store.repos[key] = {
+				name: r.nameWithOwner,
+				status: suggestStatus(r),
+				tags: [],
+				note: '',
+				order: 0
+			};
 			newKeys.push(key);
 		}
 	}
@@ -463,6 +479,23 @@ export function mergeRepos(fetched: Repo[], complete = true): void {
 
 export function vanishedIds(): string[] {
 	return Object.keys(store.repos).filter((k) => !knownIds[k]);
+}
+
+/** Vanished repos with a display name, sorted, so the board can list them. */
+export function vanishedRepos(): { key: string; name: string }[] {
+	return vanishedIds()
+		.map((key) => ({ key, name: store.repos[key]?.name || `#${key}` }))
+		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Drop a vanished repo's kept state for good; it stops appearing in the notice. */
+export function forgetRepo(key: string): void {
+	const rs = store.repos[key];
+	if (!rs) return;
+	const prevStatus = rs.status;
+	delete store.repos[key];
+	renumberColumn(prevStatus);
+	saveLocal();
 }
 
 // Filtering
@@ -691,6 +724,40 @@ async function readRemoteSha(path: string): Promise<string | undefined> {
 	}
 }
 
+/** Read state.json with its sha. Returns null when it does not exist or is unparsable. */
+async function readRemoteState(path: string): Promise<{ sha: string; state: AppState } | null> {
+	try {
+		const res = await gh<ContentsResponse>(path);
+		cachedSha = res.sha;
+		if (!res.sha || !res.content) return null;
+		const state = parseState(base64Decode(res.content));
+		return state ? { sha: res.sha, state } : null;
+	} catch (e) {
+		if (e instanceof GhError && e.status === 404) return null;
+		throw e;
+	}
+}
+
+/**
+ * Merge remote state into the store
+ */
+function mergeRemoteState(remote: AppState): void {
+	const statuses = sanitizeStatuses(remote.statuses);
+	const remoteRepos = { ...remote.repos };
+	for (const [k, rs] of Object.entries(store.repos)) {
+		const remoteRs = remote.repos[k];
+		if (remoteRs && !remoteRs.name && rs.name) remoteRepos[k] = { ...remoteRs, name: rs.name };
+	}
+	store.repos = sanitizeRepos({ ...store.repos, ...remoteRepos }, statuses);
+	store.statuses = statuses;
+	// The fresh repo list is the most reliable name source; apply it last so
+	// pulls that run without a prior fetch still get names.
+	for (const [id, r] of repoIndex) {
+		const rs = store.repos[String(id)];
+		if (rs && !rs.name) rs.name = r.nameWithOwner;
+	}
+}
+
 /** PUT state.json, retrying once when our cached sha is stale (another device pushed). */
 async function putState(path: string, sha: string | undefined): Promise<void> {
 	const body = JSON.stringify({
@@ -707,15 +774,18 @@ async function putState(path: string, sha: string | undefined): Promise<void> {
 		});
 	} catch (e) {
 		if (!(e instanceof GhError && e.status === 422)) throw e;
-		// Stale sha: the file changed on GitHub since we last read it. Refresh and retry once.
-		const fresh = await readRemoteSha(path);
+		// Stale sha: another device pushed first. Merge their changes into ours
+		// so no edits are lost, then retry with the fresh sha.
+		const remote = await readRemoteState(path);
+		if (remote) mergeRemoteState(remote.state);
+		saveLocal();
 		res = await gh<PutResponse>(path, {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				message: 'chore: update triage state',
 				content: base64Encode(JSON.stringify(store, null, 2)),
-				sha: fresh
+				sha: cachedSha
 			})
 		});
 	}
@@ -761,21 +831,10 @@ export async function pullFromGitHub(): Promise<void> {
 		throw e;
 	}
 	const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
-	let res: ContentsResponse;
-	try {
-		res = await gh<ContentsResponse>(path);
-	} catch (e) {
-		if (e instanceof GhError && e.status === 404) return;
-		throw e;
-	}
-	cachedSha = res.sha;
-	if (!res.content) return;
-	const remote = parseState(base64Decode(res.content));
+	const remote = await readRemoteState(path);
 	if (!remote) return;
-	// Last-writer-wins: remote wins per repo, local keeps repos the remote lacks.
-	store.repos = { ...store.repos, ...remote.repos };
-	store.statuses = remote.statuses;
-	store.updatedAt = remote.updatedAt;
+	mergeRemoteState(remote.state);
+	store.updatedAt = remote.state.updatedAt;
 	store.storageMode = 'github';
 	saveLocal();
 	lastPushedSignature = stateSignature();
@@ -785,6 +844,15 @@ export async function pullFromGitHub(): Promise<void> {
 }
 
 export async function enableGithubSync(): Promise<void> {
+	const login = session.viewer?.login;
+	if (!login) throw new Error('not signed in');
+	await ensureDataRepo();
+	const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
+	// Adopt existing remote state instead of pushing local over it
+	if ((await readRemoteState(path)) !== null) {
+		await pullFromGitHub();
+		return;
+	}
 	await pushToGitHub();
 }
 

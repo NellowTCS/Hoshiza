@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { sortedStatuses, filteredRepos, store, session, vanishedIds } from '$lib/state.svelte';
+	import { sortedStatuses, filteredRepos, store, session, vanishedRepos, forgetRepo } from '$lib/state.svelte';
 	import { suggestDismissed, showSuggestions } from '$lib/suggestDismiss.svelte';
 	import { login } from '$lib/api';
 	import { drag } from '$lib/boardDrag.svelte';
@@ -21,7 +21,7 @@
 				})
 		}))
 	);
-	const vanished = $derived(vanishedIds());
+	const vanished = $derived(vanishedRepos());
 	const hasRepoScope = $derived(session.scopes.includes('repo'));
 
 	// The lifted card shown under the touch pointer during a long-press drag.
@@ -74,15 +74,33 @@
 </script>
 
 {#if vanished.length > 0}
-	<p class="vanished">
-		<Info size={14} />
-		{vanished.length} repo{vanished.length === 1 ? '' : 's'} no longer appear on GitHub. Their
-		status is kept so it returns if the repo does.
-		{#if !hasRepoScope}
-			Private repos are hidden because this login lacks the <code>repo</code> scope, so
-			<button class="link" onclick={() => login()}>reconnect</button> to see them.
-		{/if}
-	</p>
+	<div class="vanished">
+		<div class="vanished-head">
+			<Info size={14} />
+			<p>
+				{vanished.length} repo{vanished.length === 1 ? '' : 's'} no longer appear on GitHub. Their
+				status is kept so it returns if the repo does.
+				{#if !hasRepoScope}
+					Private repos are hidden because this login lacks the <code>repo</code> scope, so
+					<button class="link" onclick={() => login()}>reconnect</button> to see them.
+				{/if}
+			</p>
+		</div>
+		<ul class="vanished-list">
+			{#each vanished as { key, name }}
+				<li>
+					<span class="vanished-name" title={name}>{name}</span>
+					<button
+						class="forget"
+						onclick={() => forgetRepo(key)}
+						title="Remove this repo from the board"
+					>
+						Delete
+					</button>
+				</li>
+			{/each}
+		</ul>
+	</div>
 {/if}
 
 {#if suggestDismissed.value}
@@ -170,16 +188,21 @@
 		font-size: 11.5px;
 	}
 	.vanished {
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		padding: 8px 12px;
 		margin: 0 0 14px;
+		padding: 10px 12px;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: var(--bg-subtle);
 		color: var(--text-dim);
 		font-size: 12.5px;
+	}
+	.vanished-head {
+		display: flex;
+		align-items: flex-start;
+		gap: 7px;
+	}
+	.vanished-head p {
+		margin: 0;
 	}
 	.vanished code {
 		font-size: 0.95em;
@@ -192,6 +215,43 @@
 		font-size: inherit;
 		text-decoration: underline;
 		cursor: pointer;
+	}
+	.vanished-list {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin: 8px 0 0 21px;
+		padding: 0;
+		list-style: none;
+	}
+	.vanished-list li {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.vanished-name {
+		min-width: 0;
+		flex: 1;
+		font-weight: 600;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.forget {
+		flex: none;
+		padding: 2px 8px;
+		line-height: 18px;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		background: var(--panel);
+		color: var(--text-dim);
+		font-size: 11px;
+		cursor: pointer;
+	}
+	.forget:hover {
+		border-color: var(--danger);
+		color: var(--danger);
 	}
 	.restore {
 		margin: 0 0 14px;
