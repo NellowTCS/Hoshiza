@@ -38,8 +38,10 @@
 	}
 
 	/** Insertion index derived from the pointer's Y over the column's cards. */
-	function dropIndex(clientY: number): number {
-		const cards = root.querySelectorAll<HTMLElement>('[data-card-id]');
+	function dropIndex(clientY: number, excludeId?: string): number {
+		const cards = [...root.querySelectorAll<HTMLElement>('[data-card-id]')].filter(
+			(c) => c.dataset.cardId !== excludeId
+		);
 		for (let i = 0; i < cards.length; i++) {
 			const r = cards[i].getBoundingClientRect();
 			if (clientY < r.bottom) return clientY < r.top + r.height / 2 ? i : i + 1;
@@ -53,7 +55,7 @@
 		vSpeed = 0;
 		const id = e.dataTransfer?.getData('text/plain');
 		if (!id) return;
-		moveRepo(id, status.id, dropIndex(e.clientY));
+		moveRepo(id, status.id, dropIndex(e.clientY, id));
 	}
 
 	function releaseAutoScroll(): void {

@@ -121,7 +121,13 @@ describe('corsHeaders', () => {
 		);
 	});
 
-	it('never echoes a foreign https origin', () => {
+	it('echoes a CodeSandbox preview origin', () => {
+		expect(cors('https://6pxkdn-5173.csb.app')['Access-Control-Allow-Origin']).toBe(
+			'https://6pxkdn-5173.csb.app'
+		);
+	});
+
+	it('rejects a foreign https origin that is not a CodeSandbox preview', () => {
 		expect(cors('https://evil.example')['Access-Control-Allow-Origin']).toBe(FALLBACK);
 	});
 

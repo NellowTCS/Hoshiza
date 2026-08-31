@@ -198,6 +198,16 @@ export function corsHeaders(req: Request, env: Env): Record<string, string> {
 	}
 	// Disallowed or absent origins get the app URL, which never matches a
 	// foreign Origin header, so the browser still blocks credentialed reads.
+	if (origin && !allowed.has(origin)) {
+		// CodeSandbox preview URLs (*.csb.app) are treated as dev origins.
+		if (/^https:\/\/[^/]+\.csb\.app$/.test(origin)) {
+			return {
+				'Access-Control-Allow-Origin': origin,
+				'Access-Control-Allow-Credentials': 'true',
+				Vary: 'Origin'
+			};
+		}
+	}
 	const allowOrigin = origin && allowed.has(origin) ? origin : appUrl(env);
 	return {
 		'Access-Control-Allow-Origin': allowOrigin,

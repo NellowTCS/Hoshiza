@@ -1,185 +1,230 @@
-import type { AppState, Repo, RepoState, Status } from './types';
-import { replaceState } from '$app/navigation';
-import { gh, GhError, GhAuthError, fetchSessionInfo, fetchAllRepos } from './api';
-import { loadRepos, saveRepos, isReposCacheStale } from './repoCache';
-import { suggestStatus } from './suggest';
-import { orgOf } from './format';
+import type { AppState, Repo, RepoState, Status } from "./types";
+import { replaceState } from "$app/navigation";
+import {
+  gh,
+  GhError,
+  GhAuthError,
+  fetchSessionInfo,
+  fetchAllRepos,
+} from "./api";
+import { loadRepos, saveRepos, isReposCacheStale } from "./repoCache";
+import { suggestStatus } from "./suggest";
+import { orgOf } from "./format";
 
-export const KEY = 'hoshiza_state_v1';
-export const DATA_REPO = 'hoshiza-data';
-export const DATA_FILE = 'state.json';
-export const FILTERS_KEY = 'hoshiza_filters_v1';
+export const KEY = "hoshiza_state_v1";
+export const DATA_REPO = "hoshiza-data";
+export const DATA_FILE = "state.json";
+export const FILTERS_KEY = "hoshiza_filters_v1";
 
-const FALLBACK_COLORS = ['#6a9fff', '#8a6d3b', '#2f6d5b', '#6b655c', '#484f58', '#c8452f'];
+const FALLBACK_COLORS = [
+  "#6a9fff",
+  "#8a6d3b",
+  "#2f6d5b",
+  "#6b655c",
+  "#484f58",
+  "#c8452f",
+];
 
 export const DEFAULT_STATUSES: Status[] = [
-	{ id: 'todo', label: 'Future', color: '#07a8d0', order: 0 },
-	{ id: 'attention', label: 'Currently Working On', color: '#2ed558', order: 1 },
-	{ id: 'living', label: 'Living', color: '#3a5a8c', order: 2 },
-	{ id: 'done', label: 'Done', color: '#2f6d5b', order: 3 },
-	{ id: 'dropped', label: 'Dropped', color: '#6b655c', order: 4 },
-	{ id: 'archived', label: 'Fork / Archived', color: '#484f58', order: 5 }
+  { id: "todo", label: "Future", color: "#07a8d0", order: 0 },
+  {
+    id: "attention",
+    label: "Currently Working On",
+    color: "#2ed558",
+    order: 1,
+  },
+  { id: "living", label: "Living", color: "#3a5a8c", order: 2 },
+  { id: "done", label: "Done", color: "#2f6d5b", order: 3 },
+  { id: "dropped", label: "Dropped", color: "#6b655c", order: 4 },
+  { id: "archived", label: "Fork / Archived", color: "#484f58", order: 5 },
 ];
 
 function defaults(): AppState {
-	return {
-		schema: 1,
-		updatedAt: new Date().toISOString(),
-		storageMode: 'local',
-		statuses: DEFAULT_STATUSES.map((s) => ({ ...s })),
-		repos: {}
-	};
+  return {
+    schema: 1,
+    updatedAt: new Date().toISOString(),
+    storageMode: "local",
+    statuses: DEFAULT_STATUSES.map((s) => ({ ...s })),
+    repos: {},
+  };
 }
 
 function loadLocal(): AppState {
-	if (typeof localStorage === 'undefined') return defaults(); // prerender-safe
-	try {
-		const raw = localStorage.getItem(KEY);
-		if (!raw) return defaults();
-		const parsed = JSON.parse(raw) as AppState;
-		if (parsed.schema !== 1) return defaults();
-		return {
-			schema: 1,
-			updatedAt: parsed.updatedAt ?? defaults().updatedAt,
-			storageMode: parsed.storageMode === 'github' ? 'github' : 'local',
-			statuses: sanitizeStatuses(parsed.statuses),
-			repos: sanitizeRepos(parsed.repos, parsed.statuses)
-		};
-	} catch {
-		return defaults();
-	}
+  if (typeof localStorage === "undefined") return defaults(); // prerender-safe
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return defaults();
+    const parsed = JSON.parse(raw) as AppState;
+    if (parsed.schema !== 1) return defaults();
+    return {
+      schema: 1,
+      updatedAt: parsed.updatedAt ?? defaults().updatedAt,
+      storageMode: parsed.storageMode === "github" ? "github" : "local",
+      statuses: sanitizeStatuses(parsed.statuses),
+      repos: sanitizeRepos(parsed.repos, parsed.statuses),
+    };
+  } catch {
+    return defaults();
+  }
 }
 
 function sanitizeStatuses(statuses: unknown): Status[] {
-	if (!Array.isArray(statuses) || statuses.length === 0) return defaults().statuses;
-	const out: Status[] = [];
-	for (const s of statuses) {
-		if (typeof s !== 'object' || s === null) continue;
-		const st = s as Partial<Status>;
-		if (typeof st.id !== 'string' || typeof st.label !== 'string') continue;
-		const color =
-			typeof st.color === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(st.color)
-				? st.color
-				: FALLBACK_COLORS[out.length % FALLBACK_COLORS.length];
-		out.push({ id: st.id, label: st.label, color, order: out.length });
-	}
-	return out.length ? out : defaults().statuses;
+  if (!Array.isArray(statuses) || statuses.length === 0)
+    return defaults().statuses;
+  const out: Status[] = [];
+  for (const s of statuses) {
+    if (typeof s !== "object" || s === null) continue;
+    const st = s as Partial<Status>;
+    if (typeof st.id !== "string" || typeof st.label !== "string") continue;
+    const color =
+      typeof st.color === "string" &&
+      /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(st.color)
+        ? st.color
+        : FALLBACK_COLORS[out.length % FALLBACK_COLORS.length];
+    const order =
+      typeof st.order === "number" && Number.isFinite(st.order)
+        ? st.order
+        : out.length;
+    out.push({ id: st.id, label: st.label, color, order });
+  }
+  return out.length ? out : defaults().statuses;
 }
 
-function sanitizeRepos(repos: unknown, statuses: unknown): Record<string, RepoState> {
-	const out: Record<string, RepoState> = {};
-	if (typeof repos !== 'object' || repos === null) return out;
-	const valid = new Set<string>();
-	if (Array.isArray(statuses)) {
-		for (const s of statuses) {
-			if (s && typeof s.id === 'string') valid.add(s.id);
-		}
-	}
-	const fallback = Array.isArray(statuses) && statuses[0] && typeof statuses[0].id === 'string' ? statuses[0].id : 'todo';
-	for (const [k, v] of Object.entries(repos)) {
-		if (typeof v !== 'object' || v === null) continue;
-		const r = v as Partial<RepoState>;
-		out[k] = {
-			name: typeof r.name === 'string' ? r.name : '',
-			status: typeof r.status === 'string' && valid.has(r.status) ? r.status : fallback,
-			tags: Array.isArray(r.tags) ? r.tags.filter((t): t is string => typeof t === 'string') : [],
-			note: typeof r.note === 'string' ? r.note : '',
-			order: typeof r.order === 'number' && Number.isFinite(r.order) ? r.order : 0
-		};
-	}
-	return out;
+function sanitizeRepos(
+  repos: unknown,
+  statuses: unknown,
+): Record<string, RepoState> {
+  const out: Record<string, RepoState> = {};
+  if (typeof repos !== "object" || repos === null) return out;
+  const valid = new Set<string>();
+  if (Array.isArray(statuses)) {
+    for (const s of statuses) {
+      if (s && typeof s.id === "string") valid.add(s.id);
+    }
+  }
+  const fallback =
+    Array.isArray(statuses) && statuses[0] && typeof statuses[0].id === "string"
+      ? statuses[0].id
+      : "todo";
+  for (const [k, v] of Object.entries(repos)) {
+    if (typeof v !== "object" || v === null) continue;
+    const r = v as Partial<RepoState>;
+    out[k] = {
+      name: typeof r.name === "string" ? r.name : "",
+      status:
+        typeof r.status === "string" && valid.has(r.status)
+          ? r.status
+          : fallback,
+      tags: Array.isArray(r.tags)
+        ? r.tags.filter((t): t is string => typeof t === "string")
+        : [],
+      note: typeof r.note === "string" ? r.note : "",
+      order:
+        typeof r.order === "number" && Number.isFinite(r.order) ? r.order : 0,
+    };
+  }
+  return out;
 }
 
 // Svelte 5 runes: reactive state any component can import and mutate.
 export const store = $state<AppState>(loadLocal());
 
 export const session = $state<{
-	viewer: { login: string; name: string | null; avatar: string } | null;
-	// Scopes GitHub granted the current token, from the x-oauth-scopes header.
-	scopes: string[];
-	loading: boolean;
-	// True until init() has probed the session, so the first paint never
-	// flashes the sign-in screen at a returning user.
-	pending: boolean;
-	error: string | null;
-	signedIn: boolean;
-}>({ viewer: null, scopes: [], loading: false, pending: true, error: null, signedIn: false });
+  viewer: { login: string; name: string | null; avatar: string } | null;
+  // Scopes GitHub granted the current token, from the x-oauth-scopes header.
+  scopes: string[];
+  loading: boolean;
+  // True until init() has probed the session, so the first paint never
+  // flashes the sign-in screen at a returning user.
+  pending: boolean;
+  error: string | null;
+  signedIn: boolean;
+}>({
+  viewer: null,
+  scopes: [],
+  loading: false,
+  pending: true,
+  error: null,
+  signedIn: false,
+});
 
 export const ui = $state<{
-	view: 'board' | 'map';
-	selectedRepo: Repo | null;
-	showStatuses: boolean;
-	showSync: boolean;
-}>({ view: 'board', selectedRepo: null, showStatuses: false, showSync: false });
+  view: "board" | "map";
+  selectedRepo: Repo | null;
+  showStatuses: boolean;
+  showSync: boolean;
+}>({ view: "board", selectedRepo: null, showStatuses: false, showSync: false });
 
 export const repos = $state<Repo[]>([]);
 /** databaseId keys present in the latest GitHub fetch. Object (not Set) for reliable reactivity. */
 export const knownIds = $state<Record<string, boolean>>({});
 
 interface FilterState {
-	query: string;
-	includedLanguages: string[];
-	excludedLanguages: string[];
-	includedOrgs: string[];
-	excludedOrgs: string[];
-	hideForks: boolean;
-	hideArchived: boolean;
+  query: string;
+  includedLanguages: string[];
+  excludedLanguages: string[];
+  includedOrgs: string[];
+  excludedOrgs: string[];
+  hideForks: boolean;
+  hideArchived: boolean;
 }
 
 function defaultFilters(): FilterState {
-	return {
-		query: '',
-		includedLanguages: [],
-		excludedLanguages: [],
-		includedOrgs: [],
-		excludedOrgs: [],
-		hideForks: false,
-		hideArchived: false
-	};
+  return {
+    query: "",
+    includedLanguages: [],
+    excludedLanguages: [],
+    includedOrgs: [],
+    excludedOrgs: [],
+    hideForks: false,
+    hideArchived: false,
+  };
 }
 
 function loadFilters(): FilterState {
-	if (typeof localStorage === 'undefined') return defaultFilters(); // prerender-safe
-	try {
-		const raw = localStorage.getItem(FILTERS_KEY);
-		if (!raw) return defaultFilters();
-		const p = JSON.parse(raw) as Partial<FilterState>;
-		const strArr = (v: unknown): string[] =>
-			Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-		return {
-			query: typeof p.query === 'string' ? p.query : '',
-			includedLanguages: strArr(p.includedLanguages),
-			excludedLanguages: strArr(p.excludedLanguages),
-			includedOrgs: strArr(p.includedOrgs),
-			excludedOrgs: strArr(p.excludedOrgs),
-			hideForks: p.hideForks === true,
-			hideArchived: p.hideArchived === true
-		};
-	} catch {
-		return defaultFilters();
-	}
+  if (typeof localStorage === "undefined") return defaultFilters(); // prerender-safe
+  try {
+    const raw = localStorage.getItem(FILTERS_KEY);
+    if (!raw) return defaultFilters();
+    const p = JSON.parse(raw) as Partial<FilterState>;
+    const strArr = (v: unknown): string[] =>
+      Array.isArray(v)
+        ? v.filter((x): x is string => typeof x === "string")
+        : [];
+    return {
+      query: typeof p.query === "string" ? p.query : "",
+      includedLanguages: strArr(p.includedLanguages),
+      excludedLanguages: strArr(p.excludedLanguages),
+      includedOrgs: strArr(p.includedOrgs),
+      excludedOrgs: strArr(p.excludedOrgs),
+      hideForks: p.hideForks === true,
+      hideArchived: p.hideArchived === true,
+    };
+  } catch {
+    return defaultFilters();
+  }
 }
 
 export const filters = $state<FilterState>(loadFilters());
 
 /** Live sync status for the header indicator and the sync panel. */
 export const sync = $state<{
-	status: 'idle' | 'syncing';
-	lastSyncedAt: number | null;
-	error: string | null;
-	// True from the first edit after the last push until the next push lands.
-	dirty: boolean;
-}>({ status: 'idle', lastSyncedAt: null, error: null, dirty: false });
+  status: "idle" | "syncing";
+  lastSyncedAt: number | null;
+  error: string | null;
+  // True from the first edit after the last push until the next push lands.
+  dirty: boolean;
+}>({ status: "idle", lastSyncedAt: null, error: null, dirty: false });
 
 // Non-reactive lookup cache kept in sync with `repos` by mergeRepos.
 const repoIndex = new Map<number, Repo>();
 
 export function saveLocal(): void {
-	store.updatedAt = new Date().toISOString();
-	if (typeof localStorage !== 'undefined') {
-		localStorage.setItem(KEY, JSON.stringify(store));
-	}
-	scheduleAutosync();
+  store.updatedAt = new Date().toISOString();
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(KEY, JSON.stringify(store));
+  }
+  scheduleAutosync();
 }
 
 // Auto-sync
@@ -191,393 +236,425 @@ let autosyncPushing = false;
 // Set when the quiet-window timer fires mid-push; the follow-up push runs
 // right after the in-flight one finishes so no edit is dropped.
 let autosyncQueued = false;
-let lastPushedSignature = '';
+let lastPushedSignature = "";
 
 // Session caches so routine syncs stay cheap on GitHub
 let dataRepoExists = false;
 let cachedSha: string | undefined;
 
 function stateSignature(): string {
-	return JSON.stringify([store.statuses, store.repos]);
+  return JSON.stringify([store.statuses, store.repos]);
 }
 
 function scheduleAutosync(): void {
-	if (store.storageMode !== 'github') return;
-	sync.dirty = true;
-	// Debounce: wait for a quiet window before pushing, so rapid edits don't thrash GitHub
-	clearTimeout(autosyncTimer);
-	autosyncTimer = setTimeout(() => {
-		autosyncTimer = undefined;
-		if (autosyncPushing) {
-			autosyncQueued = true;
-			return;
-		}
-		void autosyncFlush();
-	}, AUTOSYNC_DELAY);
+  if (store.storageMode !== "github") return;
+  sync.dirty = true;
+  // Debounce: wait for a quiet window before pushing, so rapid edits don't thrash GitHub
+  clearTimeout(autosyncTimer);
+  autosyncTimer = setTimeout(() => {
+    autosyncTimer = undefined;
+    if (autosyncPushing) {
+      autosyncQueued = true;
+      return;
+    }
+    void autosyncFlush();
+  }, AUTOSYNC_DELAY);
 }
 
 async function autosyncFlush(): Promise<void> {
-	autosyncPushing = true;
-	sync.status = 'syncing';
-	try {
-		if (stateSignature() === lastPushedSignature) return;
-		await pushToGitHub();
-	} catch (e) {
-		sync.error = e instanceof Error ? e.message : String(e);
-		return;
-	} finally {
-		autosyncPushing = false;
-		sync.status = 'idle';
-		if (autosyncQueued) {
-			autosyncQueued = false;
-			void autosyncFlush();
-		}
-	}
+  autosyncPushing = true;
+  sync.status = "syncing";
+  try {
+    if (stateSignature() === lastPushedSignature) {
+      sync.dirty = false;
+      return;
+    }
+    await pushToGitHub();
+  } catch (e) {
+    sync.error = e instanceof Error ? e.message : String(e);
+    return;
+  } finally {
+    autosyncPushing = false;
+    sync.status = "idle";
+    if (autosyncQueued) {
+      autosyncQueued = false;
+      void autosyncFlush();
+    }
+  }
 }
 
 // Statuses
 
 export function statusById(id: string): Status | undefined {
-	return store.statuses.find((s) => s.id === id);
+  return store.statuses.find((s) => s.id === id);
 }
 
 export function statusLabel(id: string): string {
-	return statusById(id)?.label ?? id;
+  return statusById(id)?.label ?? id;
 }
 
 export function sortedStatuses(): Status[] {
-	return [...store.statuses].sort((a, b) => a.order - b.order);
+  return [...store.statuses].sort((a, b) => a.order - b.order);
 }
 
 export function addStatus(label: string, color: string): void {
-	const base = slugify(label) || `s_${Date.now().toString(36)}`;
-	let id = base;
-	let n = 2;
-	while (store.statuses.some((s) => s.id === id)) id = `${base}_${n++}`;
-	const order = store.statuses.length ? Math.max(...store.statuses.map((s) => s.order)) + 1 : 0;
-	store.statuses.push({ id, label, color, order });
-	saveLocal();
+  const base = slugify(label) || `s_${Date.now().toString(36)}`;
+  let id = base;
+  let n = 2;
+  while (store.statuses.some((s) => s.id === id)) id = `${base}_${n++}`;
+  const order = store.statuses.length
+    ? Math.max(...store.statuses.map((s) => s.order)) + 1
+    : 0;
+  store.statuses.push({ id, label, color, order });
+  saveLocal();
 }
 
-export function updateStatus(id: string, patch: Partial<Pick<Status, 'label' | 'color'>>): void {
-	const s = statusById(id);
-	if (!s) return;
-	if (patch.label !== undefined) s.label = patch.label;
-	if (patch.color !== undefined) s.color = patch.color;
-	saveLocal();
+export function updateStatus(
+  id: string,
+  patch: Partial<Pick<Status, "label" | "color">>,
+): void {
+  const s = statusById(id);
+  if (!s) return;
+  if (patch.label !== undefined) s.label = patch.label;
+  if (patch.color !== undefined) s.color = patch.color;
+  saveLocal();
 }
 
 export function removeStatus(id: string): void {
-	if (store.statuses.length <= 1) return;
-	const idx = store.statuses.findIndex((s) => s.id === id);
-	if (idx === -1) return;
-	const fallback = sortedStatuses().find((s) => s.id !== id);
-	if (!fallback) return;
-	const moved = Object.keys(store.repos).filter((k) => store.repos[k].status === id);
-	store.statuses.splice(idx, 1);
-	for (const k of moved) store.repos[k].status = fallback.id;
-	renumberColumn(fallback.id);
-	saveLocal();
+  if (store.statuses.length <= 1) return;
+  const idx = store.statuses.findIndex((s) => s.id === id);
+  if (idx === -1) return;
+  const fallback = sortedStatuses().find((s) => s.id !== id);
+  if (!fallback) return;
+  const moved = Object.keys(store.repos).filter(
+    (k) => store.repos[k].status === id,
+  );
+  store.statuses.splice(idx, 1);
+  store.statuses.forEach((s, i) => (s.order = i));
+  for (const k of moved) store.repos[k].status = fallback.id;
+  renumberColumn(fallback.id);
+  saveLocal();
 }
 
 export function moveStatus(id: string, dir: -1 | 1): void {
-	const list = sortedStatuses();
-	const idx = list.findIndex((s) => s.id === id);
-	if (idx === -1) return;
-	const j = idx + dir;
-	if (j < 0 || j >= list.length) return;
-	const a = list[idx];
-	const b = list[j];
-	const tmp = a.order;
-	a.order = b.order;
-	b.order = tmp;
-	saveLocal();
+  const list = sortedStatuses();
+  const idx = list.findIndex((s) => s.id === id);
+  if (idx === -1) return;
+  const j = idx + dir;
+  if (j < 0 || j >= list.length) return;
+  const a = list[idx];
+  const b = list[j];
+  const tmp = a.order;
+  a.order = b.order;
+  b.order = tmp;
+  saveLocal();
 }
 
 /** Move a status to a given list index (0-based), for drag-and-drop reordering. */
 export function moveStatusTo(id: string, targetIndex: number): void {
-	const list = sortedStatuses();
-	const from = list.findIndex((s) => s.id === id);
-	if (from === -1) return;
-	const to = Math.max(0, Math.min(list.length - 1, targetIndex));
-	if (to === from) return;
-	const [status] = list.splice(from, 1);
-	list.splice(to, 0, status);
-	list.forEach((s, i) => (s.order = i));
-	saveLocal();
+  const list = sortedStatuses();
+  const from = list.findIndex((s) => s.id === id);
+  if (from === -1) return;
+  const to = Math.max(0, Math.min(list.length - 1, targetIndex));
+  if (to === from) return;
+  const [status] = list.splice(from, 1);
+  list.splice(to, 0, status);
+  list.forEach((s, i) => (s.order = i));
+  saveLocal();
 }
 
 export function resetStatuses(): void {
-	const keep = new Set(DEFAULT_STATUSES.map((s) => s.id));
-	const fallback = DEFAULT_STATUSES[0].id;
-	for (const k of Object.keys(store.repos)) {
-		if (!keep.has(store.repos[k].status)) store.repos[k].status = fallback;
-	}
-	store.statuses = DEFAULT_STATUSES.map((s) => ({ ...s }));
-	renumberColumn(fallback);
-	saveLocal();
+  const keep = new Set(DEFAULT_STATUSES.map((s) => s.id));
+  const fallback = DEFAULT_STATUSES[0].id;
+  for (const k of Object.keys(store.repos)) {
+    if (!keep.has(store.repos[k].status)) store.repos[k].status = fallback;
+  }
+  store.statuses = DEFAULT_STATUSES.map((s) => ({ ...s }));
+  renumberColumn(fallback);
+  saveLocal();
 }
 
 function slugify(s: string): string {
-	return s
-		.toLowerCase()
-		.trim()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-+|-+$/g, '');
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 // Board / repo state
 
 function nameOf(key: string): string {
-	const r = repoIndex.get(Number(key));
-	return r ? r.nameWithOwner : key;
+  const r = repoIndex.get(Number(key));
+  return r ? r.nameWithOwner : key;
 }
 
 function columnKeys(statusId: string, exclude?: string): string[] {
-	return Object.keys(store.repos)
-		.filter((k) => k !== exclude && store.repos[k].status === statusId)
-		.sort(
-			(a, b) =>
-				store.repos[a].order - store.repos[b].order || nameOf(a).localeCompare(nameOf(b))
-		);
+  return Object.keys(store.repos)
+    .filter((k) => k !== exclude && store.repos[k].status === statusId)
+    .sort(
+      (a, b) =>
+        store.repos[a].order - store.repos[b].order ||
+        nameOf(a).localeCompare(nameOf(b)),
+    );
 }
 
 function renumberColumn(statusId: string): void {
-	columnKeys(statusId).forEach((k, idx) => {
-		store.repos[k].order = idx;
-	});
+  columnKeys(statusId).forEach((k, idx) => {
+    store.repos[k].order = idx;
+  });
 }
 
 /**
  * Move a repo into a column, optionally at a specific index. Both the source and
  * target columns are renumbered so `order` stays dense and sortable.
  */
-export function moveRepo(repoId: string, toStatus: string, index?: number): void {
-	const rs = store.repos[repoId];
-	if (!rs) return;
-	const fromStatus = rs.status;
-	if (fromStatus !== toStatus) {
-		rs.status = toStatus;
-		renumberColumn(fromStatus);
-	}
-	const keys = columnKeys(toStatus, repoId);
-	const i = index === undefined ? keys.length : Math.max(0, Math.min(index, keys.length));
-	keys.splice(i, 0, repoId);
-	keys.forEach((k, idx) => {
-		store.repos[k].order = idx;
-	});
-	saveLocal();
+export function moveRepo(
+  repoId: string,
+  toStatus: string,
+  index?: number,
+): void {
+  const rs = store.repos[repoId];
+  if (!rs) return;
+  const fromStatus = rs.status;
+  if (fromStatus !== toStatus) {
+    rs.status = toStatus;
+    renumberColumn(fromStatus);
+  }
+  const keys = columnKeys(toStatus, repoId);
+  const i =
+    index === undefined
+      ? keys.length
+      : Math.max(0, Math.min(index, keys.length));
+  keys.splice(i, 0, repoId);
+  keys.forEach((k, idx) => {
+    store.repos[k].order = idx;
+  });
+  saveLocal();
 }
 
 export function assignStatus(repoId: string, statusId: string): void {
-	moveRepo(repoId, statusId);
+  moveRepo(repoId, statusId);
 }
 
 export function toggleTag(repoId: string, tag: string): void {
-	const rs = store.repos[repoId];
-	if (!rs) return;
-	const i = rs.tags.indexOf(tag);
-	if (i >= 0) rs.tags.splice(i, 1);
-	else rs.tags.push(tag);
-	saveLocal();
+  const rs = store.repos[repoId];
+  if (!rs) return;
+  const i = rs.tags.indexOf(tag);
+  if (i >= 0) rs.tags.splice(i, 1);
+  else rs.tags.push(tag);
+  saveLocal();
 }
 
 export function addTag(repoId: string, tag: string): void {
-	const t = tag.trim();
-	if (!t) return;
-	const rs = store.repos[repoId];
-	if (!rs || rs.tags.includes(t)) return;
-	rs.tags.push(t);
-	saveLocal();
+  const t = tag.trim();
+  if (!t) return;
+  const rs = store.repos[repoId];
+  if (!rs || rs.tags.includes(t)) return;
+  rs.tags.push(t);
+  saveLocal();
 }
 
 export function setNote(repoId: string, note: string): void {
-	const rs = store.repos[repoId];
-	if (!rs) return;
-	rs.note = note;
-	saveLocal();
+  const rs = store.repos[repoId];
+  if (!rs) return;
+  rs.note = note;
+  saveLocal();
 }
 
 // Suggestions
 
 export function suggestedFor(repo: Repo): string {
-	return suggestStatus(repo);
+  return suggestStatus(repo);
 }
 
 export function applySuggestion(repo: Repo): void {
-	const key = String(repo.databaseId);
-	if (!store.repos[key]) {
-		store.repos[key] = {
-			name: repo.nameWithOwner,
-			status: suggestStatus(repo),
-			tags: [],
-			note: '',
-			order: 0
-		};
-		renumberColumn(store.repos[key].status);
-		saveLocal();
-		return;
-	}
-	moveRepo(key, suggestStatus(repo));
+  const key = String(repo.databaseId);
+  if (!store.repos[key]) {
+    store.repos[key] = {
+      name: repo.nameWithOwner,
+      status: suggestStatus(repo),
+      tags: [],
+      note: "",
+      order: 0,
+    };
+    renumberColumn(store.repos[key].status);
+    saveLocal();
+    return;
+  }
+  moveRepo(key, suggestStatus(repo));
 }
 
 export function applyAllSuggestions(): void {
-	for (const r of repos) {
-		const key = String(r.databaseId);
-		if (store.repos[key]?.status !== suggestStatus(r)) applySuggestion(r);
-	}
-	saveLocal();
+  for (const r of repos) {
+    const key = String(r.databaseId);
+    if (store.repos[key]?.status !== suggestStatus(r)) applySuggestion(r);
+  }
+  saveLocal();
 }
 
 /** Repos whose current assignment differs from the heuristic, respecting filters. */
 export function suggestedRepos(): Repo[] {
-	return filteredRepos().filter((r) => {
-		const key = String(r.databaseId);
-		return store.repos[key]?.status !== suggestStatus(r);
-	});
+  return filteredRepos().filter((r) => {
+    const key = String(r.databaseId);
+    return store.repos[key]?.status !== suggestStatus(r);
+  });
 }
 
 // Merge rule
 
 export function mergeRepos(fetched: Repo[], complete = true): void {
-	const prev = new Map<number, Repo>(repos.map((r) => [r.databaseId, r]));
-	const merged = new Map<number, Repo>();
-	for (const r of fetched) merged.set(r.databaseId, r);
-	if (!complete) {
-		for (const [id, r] of prev) if (!merged.has(id)) merged.set(id, r);
-	}
-	const list = [...merged.values()].sort((a, b) => +new Date(b.pushedAt) - +new Date(a.pushedAt));
-	repos.splice(0, repos.length, ...list);
-	repoIndex.clear();
-	const seen: Record<string, boolean> = {};
-	const newKeys: string[] = [];
-	for (const r of list) {
-		repoIndex.set(r.databaseId, r);
-		const key = String(r.databaseId);
-		seen[key] = true;
-		if (store.repos[key]) {
-			// Backfill names for entries written before names were persisted.
-			if (!store.repos[key].name) store.repos[key].name = r.nameWithOwner;
-		} else {
-			store.repos[key] = {
-				name: r.nameWithOwner,
-				status: suggestStatus(r),
-				tags: [],
-				note: '',
-				order: 0
-			};
-			newKeys.push(key);
-		}
-	}
-	if (complete) {
-		for (const k of Object.keys(knownIds)) delete knownIds[k];
-		for (const k of Object.keys(seen)) knownIds[k] = true;
-	}
-	for (const key of newKeys) renumberColumn(store.repos[key].status);
-	saveLocal();
+  const prev = new Map<number, Repo>(repos.map((r) => [r.databaseId, r]));
+  const merged = new Map<number, Repo>();
+  for (const r of fetched) merged.set(r.databaseId, r);
+  if (!complete) {
+    for (const [id, r] of prev) if (!merged.has(id)) merged.set(id, r);
+  }
+  const list = [...merged.values()].sort(
+    (a, b) => +new Date(b.pushedAt) - +new Date(a.pushedAt),
+  );
+  repos.splice(0, repos.length, ...list);
+  repoIndex.clear();
+  const seen: Record<string, boolean> = {};
+  const newKeys: string[] = [];
+  for (const r of list) {
+    repoIndex.set(r.databaseId, r);
+    const key = String(r.databaseId);
+    seen[key] = true;
+    if (store.repos[key]) {
+      // Backfill names for entries written before names were persisted.
+      if (!store.repos[key].name) store.repos[key].name = r.nameWithOwner;
+    } else {
+      store.repos[key] = {
+        name: r.nameWithOwner,
+        status: suggestStatus(r),
+        tags: [],
+        note: "",
+        order: 0,
+      };
+      newKeys.push(key);
+    }
+  }
+  if (complete) {
+    for (const k of Object.keys(knownIds)) delete knownIds[k];
+    for (const k of Object.keys(seen)) knownIds[k] = true;
+  }
+  for (const key of newKeys) renumberColumn(store.repos[key].status);
+  saveLocal();
 }
 
 export function vanishedIds(): string[] {
-	return Object.keys(store.repos).filter((k) => !knownIds[k]);
+  return Object.keys(store.repos).filter((k) => !knownIds[k]);
 }
 
 /** Vanished repos with a display name, sorted, so the board can list them. */
 export function vanishedRepos(): { key: string; name: string }[] {
-	return vanishedIds()
-		.map((key) => ({ key, name: store.repos[key]?.name || `#${key}` }))
-		.sort((a, b) => a.name.localeCompare(b.name));
+  return vanishedIds()
+    .map((key) => ({ key, name: store.repos[key]?.name || `#${key}` }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Drop a vanished repo's kept state for good; it stops appearing in the notice. */
 export function forgetRepo(key: string): void {
-	const rs = store.repos[key];
-	if (!rs) return;
-	const prevStatus = rs.status;
-	delete store.repos[key];
-	renumberColumn(prevStatus);
-	saveLocal();
+  const rs = store.repos[key];
+  if (!rs) return;
+  const prevStatus = rs.status;
+  delete store.repos[key];
+  renumberColumn(prevStatus);
+  saveLocal();
 }
 
 // Filtering
 
 export function filteredRepos(): Repo[] {
-	const q = filters.query.trim().toLowerCase();
-	return repos.filter((r) => {
-		const lang = r.primaryLanguage?.name ?? 'none';
-		if (filters.excludedLanguages.includes(lang)) return false;
-		if (filters.includedLanguages.length && !filters.includedLanguages.includes(lang)) return false;
-		const org = orgOf(r);
-		if (filters.excludedOrgs.includes(org)) return false;
-		if (filters.includedOrgs.length && !filters.includedOrgs.includes(org)) return false;
-		if (filters.hideForks && r.isFork) return false;
-		if (filters.hideArchived && r.isArchived) return false;
-		if (q) {
-			const hay = `${r.nameWithOwner} ${r.name} ${r.description ?? ''}`.toLowerCase();
-			if (!hay.includes(q)) return false;
-		}
-		return true;
-	});
+  const q = filters.query.trim().toLowerCase();
+  return repos.filter((r) => {
+    const lang = r.primaryLanguage?.name ?? "none";
+    if (filters.excludedLanguages.includes(lang)) return false;
+    if (
+      filters.includedLanguages.length &&
+      !filters.includedLanguages.includes(lang)
+    )
+      return false;
+    const org = orgOf(r);
+    if (filters.excludedOrgs.includes(org)) return false;
+    if (filters.includedOrgs.length && !filters.includedOrgs.includes(org))
+      return false;
+    if (filters.hideForks && r.isFork) return false;
+    if (filters.hideArchived && r.isArchived) return false;
+    if (q) {
+      const hay =
+        `${r.nameWithOwner} ${r.name} ${r.description ?? ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
 }
 
 export function languageOptions(): string[] {
-	const s = new Set<string>();
-	for (const r of repos) s.add(r.primaryLanguage?.name ?? 'none');
-	return [...s].sort();
+  const s = new Set<string>();
+  for (const r of repos) s.add(r.primaryLanguage?.name ?? "none");
+  return [...s].sort();
 }
 
 export function orgOptions(): string[] {
-	const s = new Set<string>();
-	for (const r of repos) s.add(orgOf(r));
-	return [...s].sort();
+  const s = new Set<string>();
+  for (const r of repos) s.add(orgOf(r));
+  return [...s].sort();
 }
 
 // Export / import
 
 export function exportJson(): void {
-	saveLocal();
-	const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' });
-	const url = URL.createObjectURL(blob);
-	const a = document.createElement('a');
-	a.href = url;
-	a.download = `hoshiza-state-${new Date().toISOString().slice(0, 10)}.json`;
-	a.click();
-	URL.revokeObjectURL(url);
+  saveLocal();
+  const blob = new Blob([JSON.stringify(store, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `hoshiza-state-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 /** Returns a human-readable error string, or null on success. */
 export function importJson(text: string): string | null {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(text);
-	} catch {
-		return 'not valid JSON';
-	}
-	const err = validateState(parsed);
-	if (err) return err;
-	const p = parsed as AppState;
-	store.statuses = p.statuses;
-	store.repos = p.repos;
-	store.storageMode = p.storageMode;
-	saveLocal();
-	return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return "not valid JSON";
+  }
+  const err = validateState(parsed);
+  if (err) return err;
+  const p = parsed as AppState;
+  store.statuses = p.statuses;
+  store.repos = p.repos;
+  store.storageMode = p.storageMode;
+  saveLocal();
+  return null;
 }
 
 /** Read an uploaded state file and import it. Returns an error message or null. */
 export async function importFile(file: File): Promise<string | null> {
-	try {
-		return importJson(await file.text());
-	} catch {
-		return 'Could not read file.';
-	}
+  try {
+    return importJson(await file.text());
+  } catch {
+    return "Could not read file.";
+  }
 }
 
 function validateState(v: unknown): string | null {
-	if (typeof v !== 'object' || v === null) return 'state must be a JSON object';
-	const s = v as Partial<AppState>;
-	if (s.schema !== 1) return `unsupported schema ${String(s.schema)} (expected 1)`;
-	if (!Array.isArray(s.statuses) || s.statuses.length === 0) return 'no statuses in file';
-	if (typeof s.repos !== 'object' || s.repos === null) return 'no repos map in file';
-	return null;
+  if (typeof v !== "object" || v === null) return "state must be a JSON object";
+  const s = v as Partial<AppState>;
+  if (s.schema !== 1)
+    return `unsupported schema ${String(s.schema)} (expected 1)`;
+  if (!Array.isArray(s.statuses) || s.statuses.length === 0)
+    return "no statuses in file";
+  if (typeof s.repos !== "object" || s.repos === null)
+    return "no repos map in file";
+  return null;
 }
 
 // Session / init
@@ -587,74 +664,83 @@ const REFRESH_MIN_INTERVAL_MS = 30_000;
 let lastRepoFetchAt = 0;
 
 export async function init(): Promise<void> {
-	if (session.loading) return;
-	session.pending = false;
-	session.loading = true;
-	session.error = null;
-	try {
-		const { user, scopes } = await fetchSessionInfo();
-		session.viewer = { login: user.login, name: user.name, avatar: user.avatar_url };
-		session.scopes = scopes;
-		session.signedIn = true;
-		const snapshot = await loadRepos(user.login);
-		if (snapshot) {
-			// Paint the cached board immediately, then refresh in the background
-			// only when the snapshot is stale. A failed refresh must not blank
-			// the working snapshot, so its error goes to the console, not
-			// session.error (which would swap the board for the error screen).
-			mergeRepos(snapshot.repos, true);
-			if (isReposCacheStale(snapshot.cachedAt)) {
-				refreshRepos().catch((e) =>
-					console.warn('background repo refresh failed:', e instanceof Error ? e.message : e)
-				);
-			}
-		} else {
-			await refreshRepos();
-		}
-		// Pick up changes from another device before the user starts editing.
-		if (store.storageMode === 'github') await pullFromGitHub();
-		await completeSyncOptIn();
-	} catch (e) {
-		if (e instanceof GhAuthError) {
-			session.signedIn = false;
-			session.viewer = null;
-			session.scopes = [];
-		} else {
-			session.error = e instanceof Error ? e.message : String(e);
-		}
-	} finally {
-		session.loading = false;
-	}
+  if (session.loading) return;
+  session.pending = false;
+  session.loading = true;
+  session.error = null;
+  try {
+    const { user, scopes } = await fetchSessionInfo();
+    session.viewer = {
+      login: user.login,
+      name: user.name,
+      avatar: user.avatar_url,
+    };
+    session.scopes = scopes;
+    session.signedIn = true;
+    const snapshot = await loadRepos(user.login);
+    if (snapshot) {
+      // Paint the cached board immediately, then refresh in the background
+      // only when the snapshot is stale. A failed refresh must not blank
+      // the working snapshot, so its error goes to the console, not
+      // session.error (which would swap the board for the error screen).
+      mergeRepos(snapshot.repos, true);
+      if (isReposCacheStale(snapshot.cachedAt)) {
+        refreshRepos().catch((e) =>
+          console.warn(
+            "background repo refresh failed:",
+            e instanceof Error ? e.message : e,
+          ),
+        );
+      }
+    } else {
+      await refreshRepos();
+    }
+    // Pick up changes from another device before the user starts editing.
+    if (store.storageMode === "github") await pullFromGitHub();
+    await completeSyncOptIn();
+  } catch (e) {
+    if (e instanceof GhAuthError) {
+      session.signedIn = false;
+      session.viewer = null;
+      session.scopes = [];
+    } else {
+      session.error = e instanceof Error ? e.message : String(e);
+    }
+  } finally {
+    session.loading = false;
+  }
 }
 
 export async function refreshRepos(): Promise<void> {
-	// Gate refetches to a minimum interval once a snapshot exists
-	const now = Date.now();
-	if (repos.length > 0 && now - lastRepoFetchAt < REFRESH_MIN_INTERVAL_MS) return;
-	lastRepoFetchAt = now;
-	const { repos: fetched, complete, owners } = await fetchAllRepos();
-	mergeRepos(fetched, complete);
-	if (complete && session.viewer) await saveRepos(session.viewer.login, fetched);
-	if (!complete) {
-		const short = owners.filter((o) => o.fetched < o.total);
-		const detail = short.length
-			? short.map((o) => `${o.name} ${o.fetched}/${o.total}`).join(', ')
-			: 'repo counts don\'t add up';
-		console.warn('incomplete repo fetch:', owners);
-		session.error = `GitHub returned an incomplete repo list (${detail}); keeping the last full snapshot. Refresh to retry.`;
-	}
+  // Gate refetches to a minimum interval once a snapshot exists
+  const now = Date.now();
+  if (repos.length > 0 && now - lastRepoFetchAt < REFRESH_MIN_INTERVAL_MS)
+    return;
+  lastRepoFetchAt = now;
+  const { repos: fetched, complete, owners } = await fetchAllRepos();
+  mergeRepos(fetched, complete);
+  if (complete && session.viewer)
+    await saveRepos(session.viewer.login, fetched);
+  if (!complete) {
+    const short = owners.filter((o) => o.fetched < o.total);
+    const detail = short.length
+      ? short.map((o) => `${o.name} ${o.fetched}/${o.total}`).join(", ")
+      : "repo counts don't add up";
+    console.warn("incomplete repo fetch:", owners);
+    session.error = `GitHub returned an incomplete repo list (${detail}); keeping the last full snapshot. Refresh to retry.`;
+  }
 }
 
 export function signOut(): void {
-	session.viewer = null;
-	session.scopes = [];
-	session.signedIn = false;
-	repos.splice(0);
-	repoIndex.clear();
-	for (const k of Object.keys(knownIds)) delete knownIds[k];
-	// The data repo and blob sha are per-account; drop the caches on sign-out.
-	dataRepoExists = false;
-	cachedSha = undefined;
+  session.viewer = null;
+  session.scopes = [];
+  session.signedIn = false;
+  repos.splice(0);
+  repoIndex.clear();
+  for (const k of Object.keys(knownIds)) delete knownIds[k];
+  // The data repo and blob sha are per-account; drop the caches on sign-out.
+  dataRepoExists = false;
+  cachedSha = undefined;
 }
 
 /**
@@ -662,219 +748,229 @@ export function signOut(): void {
  * Cleans the query string and kicks off sync.
  */
 async function completeSyncOptIn(): Promise<void> {
-	if (typeof window === 'undefined') return;
-	const wantSync = window.location.search.includes('sync=1');
-	await replaceState(window.location.pathname, {});
-	if (!wantSync || store.storageMode === 'github') return;
-	try {
-		await enableGithubSync();
-	} catch (e) {
-		session.error = `Sync setup failed: ${e instanceof Error ? e.message : String(e)}`;
-	}
+  if (typeof window === "undefined") return;
+  const wantSync = window.location.search.includes("sync=1");
+  await replaceState(window.location.pathname, {});
+  if (!wantSync || store.storageMode === "github") return;
+  try {
+    await enableGithubSync();
+  } catch (e) {
+    session.error = `Sync setup failed: ${e instanceof Error ? e.message : String(e)}`;
+  }
 }
 
 // GitHub sync
 
 interface ContentsResponse {
-	sha?: string;
-	content?: string;
+  sha?: string;
+  content?: string;
 }
 
 /** Create the private data repo if it does not exist. Requires the `repo` scope. */
 export async function ensureDataRepo(): Promise<void> {
-	const login = session.viewer?.login;
-	if (!login) throw new Error('not signed in');
-	if (dataRepoExists) return;
-	const path = `/repos/${login}/${DATA_REPO}`;
-	let exists = true;
-	try {
-		await gh(path);
-	} catch (e) {
-		if (e instanceof GhError && e.status === 404) exists = false;
-		else throw e;
-	}
-	if (!exists) {
-		await gh('/user/repos', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				name: DATA_REPO,
-				description: 'Hoshiza triage state, auto-generated',
-				private: true,
-				auto_init: true
-			})
-		});
-	}
-	dataRepoExists = true;
+  const login = session.viewer?.login;
+  if (!login) throw new Error("not signed in");
+  if (dataRepoExists) return;
+  const path = `/repos/${login}/${DATA_REPO}`;
+  let exists = true;
+  try {
+    await gh(path);
+  } catch (e) {
+    if (e instanceof GhError && e.status === 404) exists = false;
+    else throw e;
+  }
+  if (!exists) {
+    await gh("/user/repos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: DATA_REPO,
+        description: "Hoshiza triage state, auto-generated",
+        private: true,
+        auto_init: true,
+      }),
+    });
+  }
+  dataRepoExists = true;
 }
 
 interface PutResponse {
-	content?: { sha?: string };
+  content?: { sha?: string };
 }
 
 /** Read the current blob sha of state.json; undefined when the file does not exist yet. */
 async function readRemoteSha(path: string): Promise<string | undefined> {
-	try {
-		const existing = await gh<ContentsResponse>(path);
-		cachedSha = existing.sha;
-		return existing.sha;
-	} catch (e) {
-		if (e instanceof GhError && e.status === 404) return undefined;
-		throw e;
-	}
+  try {
+    const existing = await gh<ContentsResponse>(path);
+    cachedSha = existing.sha;
+    return existing.sha;
+  } catch (e) {
+    if (e instanceof GhError && e.status === 404) return undefined;
+    throw e;
+  }
 }
 
 /** Read state.json with its sha. Returns null when it does not exist or is unparsable. */
-async function readRemoteState(path: string): Promise<{ sha: string; state: AppState } | null> {
-	try {
-		const res = await gh<ContentsResponse>(path);
-		cachedSha = res.sha;
-		if (!res.sha || !res.content) return null;
-		const state = parseState(base64Decode(res.content));
-		return state ? { sha: res.sha, state } : null;
-	} catch (e) {
-		if (e instanceof GhError && e.status === 404) return null;
-		throw e;
-	}
+async function readRemoteState(
+  path: string,
+): Promise<{ sha: string; state: AppState } | null> {
+  try {
+    const res = await gh<ContentsResponse>(path);
+    cachedSha = res.sha;
+    if (!res.sha || !res.content) return null;
+    const state = parseState(base64Decode(res.content));
+    return state ? { sha: res.sha, state } : null;
+  } catch (e) {
+    if (e instanceof GhError && e.status === 404) return null;
+    throw e;
+  }
 }
 
 /**
  * Merge remote state into the store
  */
 function mergeRemoteState(remote: AppState): void {
-	const statuses = sanitizeStatuses(remote.statuses);
-	const remoteRepos = { ...remote.repos };
-	for (const [k, rs] of Object.entries(store.repos)) {
-		const remoteRs = remote.repos[k];
-		if (remoteRs && !remoteRs.name && rs.name) remoteRepos[k] = { ...remoteRs, name: rs.name };
-	}
-	store.repos = sanitizeRepos({ ...store.repos, ...remoteRepos }, statuses);
-	store.statuses = statuses;
-	// The fresh repo list is the most reliable name source; apply it last so
-	// pulls that run without a prior fetch still get names.
-	for (const [id, r] of repoIndex) {
-		const rs = store.repos[String(id)];
-		if (rs && !rs.name) rs.name = r.nameWithOwner;
-	}
+  const statuses = sanitizeStatuses(remote.statuses);
+  const remoteRepos = { ...remote.repos };
+  for (const [k, rs] of Object.entries(store.repos)) {
+    const remoteRs = remote.repos[k];
+    if (remoteRs && !remoteRs.name && rs.name)
+      remoteRepos[k] = { ...remoteRs, name: rs.name };
+  }
+  store.repos = sanitizeRepos({ ...store.repos, ...remoteRepos }, statuses);
+  store.statuses = statuses;
+  for (const s of statuses) renumberColumn(s.id);
+  // The fresh repo list is the most reliable name source; apply it last so
+  // pulls that run without a prior fetch still get names.
+  for (const [id, r] of repoIndex) {
+    const rs = store.repos[String(id)];
+    if (rs && !rs.name) rs.name = r.nameWithOwner;
+  }
 }
 
 /** PUT state.json, retrying once when our cached sha is stale (another device pushed). */
 async function putState(path: string, sha: string | undefined): Promise<void> {
-	const body = JSON.stringify({
-		message: 'chore: update triage state',
-		content: base64Encode(JSON.stringify(store, null, 2)),
-		sha
-	});
-	let res: PutResponse;
-	try {
-		res = await gh<PutResponse>(path, {
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			body
-		});
-	} catch (e) {
-		if (!(e instanceof GhError && e.status === 422)) throw e;
-		// Stale sha: another device pushed first. Merge their changes into ours
-		// so no edits are lost, then retry with the fresh sha.
-		const remote = await readRemoteState(path);
-		if (remote) mergeRemoteState(remote.state);
-		saveLocal();
-		res = await gh<PutResponse>(path, {
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				message: 'chore: update triage state',
-				content: base64Encode(JSON.stringify(store, null, 2)),
-				sha: cachedSha
-			})
-		});
-	}
-	if (res.content?.sha) cachedSha = res.content.sha;
+  const body = JSON.stringify({
+    message: "chore: update triage state",
+    content: base64Encode(JSON.stringify(store, null, 2)),
+    sha,
+  });
+  let res: PutResponse;
+  try {
+    res = await gh<PutResponse>(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+  } catch (e) {
+    if (!(e instanceof GhError && e.status === 422)) throw e;
+    // Stale sha: another device pushed first. Merge their changes into ours
+    // so no edits are lost, then retry with the fresh sha.
+    const remote = await readRemoteState(path);
+    if (remote) mergeRemoteState(remote.state);
+    saveLocal();
+    res = await gh<PutResponse>(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "chore: update triage state",
+        content: base64Encode(JSON.stringify(store, null, 2)),
+        sha: cachedSha,
+      }),
+    });
+  }
+  if (res.content?.sha) cachedSha = res.content.sha;
 }
 
 export async function pushToGitHub(): Promise<void> {
-	const login = session.viewer?.login;
-	if (!login) throw new Error('not signed in');
-	await ensureDataRepo();
-	saveLocal();
-	const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
-	if (cachedSha === undefined) {
-		// First push this session: resolve the current sha up front
-		await readRemoteSha(path);
-	}
-	await putState(path, cachedSha);
-	store.storageMode = 'github';
-	saveLocal();
-	lastPushedSignature = stateSignature();
-	sync.lastSyncedAt = Date.now();
-	sync.dirty = false;
-	sync.error = null;
+  const login = session.viewer?.login;
+  if (!login) throw new Error("not signed in");
+  await ensureDataRepo();
+  saveLocal();
+  const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
+  if (cachedSha === undefined) {
+    // First push this session: resolve the current sha up front
+    await readRemoteSha(path);
+  }
+  await putState(path, cachedSha);
+  store.storageMode = "github";
+  saveLocal();
+  lastPushedSignature = stateSignature();
+  sync.lastSyncedAt = Date.now();
+  sync.dirty = false;
+  sync.error = null;
 }
 
 /** True for GitHub 403s caused by an insufficient token scope. */
 function isScopeError(e: unknown): boolean {
-	return e instanceof GhError && e.status === 403 && /scope/i.test(e.message);
+  return e instanceof GhError && e.status === 403 && /scope/i.test(e.message);
 }
 
 export async function pullFromGitHub(): Promise<void> {
-	const login = session.viewer?.login;
-	if (!login) return;
-	try {
-		await ensureDataRepo();
-	} catch (e) {
-		if (isScopeError(e)) {
-			store.storageMode = 'local';
-			saveLocal();
-			sync.error = 'GitHub sync needs the repo scope. Re-enable sync to re-authorize.';
-			return;
-		}
-		throw e;
-	}
-	const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
-	const remote = await readRemoteState(path);
-	if (!remote) return;
-	mergeRemoteState(remote.state);
-	store.updatedAt = remote.state.updatedAt;
-	store.storageMode = 'github';
-	saveLocal();
-	lastPushedSignature = stateSignature();
-	sync.lastSyncedAt = Date.now();
-	sync.dirty = false;
-	sync.error = null;
+  const login = session.viewer?.login;
+  if (!login) return;
+  try {
+    await ensureDataRepo();
+  } catch (e) {
+    if (isScopeError(e)) {
+      store.storageMode = "local";
+      saveLocal();
+      sync.error =
+        "GitHub sync needs the repo scope. Re-enable sync to re-authorize.";
+      return;
+    }
+    throw e;
+  }
+  const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
+  const remote = await readRemoteState(path);
+  if (!remote) return;
+  mergeRemoteState(remote.state);
+  store.updatedAt = remote.state.updatedAt;
+  store.storageMode = "github";
+  saveLocal();
+  lastPushedSignature = stateSignature();
+  sync.lastSyncedAt = Date.now();
+  sync.dirty = false;
+  sync.error = null;
 }
 
 export async function enableGithubSync(): Promise<void> {
-	const login = session.viewer?.login;
-	if (!login) throw new Error('not signed in');
-	await ensureDataRepo();
-	const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
-	// Adopt existing remote state instead of pushing local over it
-	if ((await readRemoteState(path)) !== null) {
-		await pullFromGitHub();
-		return;
-	}
-	await pushToGitHub();
+  const login = session.viewer?.login;
+  if (!login) throw new Error("not signed in");
+  await ensureDataRepo();
+  const path = `/repos/${login}/${DATA_REPO}/contents/${DATA_FILE}`;
+  // Adopt existing remote state instead of pushing local over it
+  if ((await readRemoteState(path)) !== null) {
+    await pullFromGitHub();
+    return;
+  }
+  await pushToGitHub();
 }
 
 export function disableGithubSync(): void {
-	store.storageMode = 'local';
-	saveLocal();
+  store.storageMode = "local";
+  saveLocal();
 }
 
 function parseState(s: string): AppState | null {
-	try {
-		const v = JSON.parse(s) as AppState;
-		if (v.schema !== 1 || !Array.isArray(v.statuses) || typeof v.repos !== 'object') return null;
-		return v;
-	} catch {
-		return null;
-	}
+  try {
+    const v = JSON.parse(s) as AppState;
+    if (
+      v.schema !== 1 ||
+      !Array.isArray(v.statuses) ||
+      typeof v.repos !== "object"
+    )
+      return null;
+    return v;
+  } catch {
+    return null;
+  }
 }
 
 function base64Encode(s: string): string {
-	return btoa(unescape(encodeURIComponent(s)));
+  return btoa(unescape(encodeURIComponent(s)));
 }
 
 function base64Decode(s: string): string {
-	return decodeURIComponent(escape(atob(s)));
+  return decodeURIComponent(escape(atob(s)));
 }

@@ -1,29 +1,32 @@
 {
-	"name": "hoshiza",
-	"version": "1.0.0",
-	"private": true,
-	"type": "module",
-	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build",
-		"preview": "vite preview",
-		"prepare": "svelte-kit sync || echo ''",
-		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
-	},
-	"devDependencies": {
-		"@sveltejs/adapter-static": "^3.0.10",
-		"@sveltejs/kit": "^2.70.2",
-		"@sveltejs/vite-plugin-svelte": "^7.2.0",
-		"@vite-pwa/assets-generator": "^1.0.2",
-		"@vite-pwa/sveltekit": "^1.1.0",
-		"svelte": "^5.56.8",
-		"svelte-check": "^4.7.5",
-		"typescript": "^6.0.3",
-		"vite": "^8.2.1"
-	},
-	"dependencies": {
-		"@nellowtcs/updato": "^1.0.3",
-		"lucide-svelte": "^1.0.1",
-		"vis-network": "^10.1.1"
-	}
+  "name": "hoshiza",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "prepare": "svelte-kit sync || echo ''",
+    "make-pretty": "prettier --write .",
+    "mp:check": "prettier --check .",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.10",
+    "@sveltejs/kit": "^2.70.2",
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@vite-pwa/assets-generator": "^1.0.2",
+    "@vite-pwa/sveltekit": "^1.1.0",
+    "prettier": "^3.9.6",
+    "svelte": "^5.56.8",
+    "svelte-check": "^4.7.5",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.1"
+  },
+  "dependencies": {
+    "@nellowtcs/updato": "^1.0.3",
+    "lucide-svelte": "^1.0.1",
+    "vis-network": "^10.1.1"
+  }
 }
