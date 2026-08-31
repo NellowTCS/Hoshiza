@@ -150,7 +150,8 @@
 				multiselect: false,
 				selectConnectedEdges: false,
 				dragView: true,
-				zoomView: true
+				zoomView: true,
+				zoomSpeed: 0.7
 			},
 			physics: {
 				enabled: true,
