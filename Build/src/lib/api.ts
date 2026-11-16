@@ -1,11 +1,11 @@
 import type { GitHubUser, Repo } from "./types";
 import { WORKER_URL, READ_SCOPES } from "./config";
-import { base } from "$app/paths";
+import { resolve } from "$app/paths";
 
 /**
  * App base path (`/Hoshiza` in production, empty in dev).
  */
-const APP_BASE = base;
+const APP_BASE = resolve("/").replace(/\/$/, "");
 
 /** Thrown when the worker has no valid session (missing/expired cookie). */
 export class GhAuthError extends Error {
@@ -34,19 +34,70 @@ export interface GhMeta {
   scopes: string[];
 }
 
+
+const TOKEN_KEY = "hoshiza_gh_token";
+
+export function storeSessionToken(token: string): void {
+  if (typeof sessionStorage !== "undefined") sessionStorage.setItem(TOKEN_KEY, token);
+}
+export function getSessionToken(): string | null {
+  if (typeof sessionStorage === "undefined") return null;
+  return sessionStorage.getItem(TOKEN_KEY);
+}
+export function clearSessionToken(): void {
+  if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(TOKEN_KEY);
+}
+
+/** Exchange opaque code (from URL fragment) for a session token. */
+export async function consumeTokenFromUrl(): Promise<void> {
+  if (typeof window === "undefined") return;
+  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+  if (!hash) return;
+  const params = new URLSearchParams(hash);
+  const code = params.get("code");
+  // Always scrub sensitive fragments from history/URL immediately.
+  if (params.has("code") || params.has("token")) {
+    params.delete("code");
+    params.delete("token");
+    const rest = params.toString();
+    history.replaceState(null, "", window.location.pathname + window.location.search + (rest ? "#" + rest : ""));
+  }
+  if (!code) return;
+  try {
+    const r = await fetch(`${WORKER_URL}/api/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ code }),
+    });
+    if (!r.ok) return;
+    const j = (await r.json()) as { token?: string };
+    if (j.token) storeSessionToken(j.token);
+  } catch {
+    /* cookie-based session may still work */
+  }
+}
+
 /** Authenticated GitHub API call through the Worker proxy, including headers. */
 export async function ghWithMeta<T = unknown>(
   path: string,
   opts: RequestInit = {},
 ): Promise<{ data: T; scopes: string[] }> {
+  const token = getSessionToken();
+  const headers = new Headers(opts.headers);
+  if (token) headers.set("Authorization", `Bearer ${token}`);
   const r = await fetch(
     `${WORKER_URL}/api/github?path=${encodeURIComponent(path)}`,
     {
       ...opts,
+      headers,
       credentials: "include",
     },
   );
-  if (r.status === 401) throw new GhAuthError();
+  if (r.status === 401) {
+    clearSessionToken();
+    throw new GhAuthError();
+  }
   if (!r.ok) throw new GhError(r.status, await apiMessage(r));
   const scopes = (r.headers.get("x-oauth-scopes") ?? "")
     .split(",")
@@ -83,9 +134,12 @@ export function login(next = "/", scope = READ_SCOPES): void {
 
 /** Clear the session cookie on the Worker and return to the app. */
 export function logout(): void {
+  clearSessionToken();
   const origin = encodeURIComponent(location.origin + APP_BASE);
   location.href = `${WORKER_URL}/logout?next=${encodeURIComponent("/")}&origin=${origin}`;
 }
+
+if (typeof window !== "undefined") consumeTokenFromUrl();
 
 export interface SessionInfo {
   user: GitHubUser;

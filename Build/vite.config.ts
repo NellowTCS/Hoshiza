@@ -1,16 +1,22 @@
-import { sveltekit } from "@sveltejs/kit/vite";
-import { SvelteKitPWA } from "@vite-pwa/sveltekit";
+import adapter from "@sveltejs/adapter-static";
+import { withPwa } from "@vite-pwa/sveltekit";
 import { defineConfig } from "vite";
+import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig(({ command }) => {
-  // Matches svelte.config.js: no base in dev, repo name as base for the Pages deploy.
   const base = command === "serve" ? "" : "/Hoshiza";
 
   return {
     envPrefix: ["VITE_", "PUBLIC_"],
-    plugins: [
-      sveltekit(),
-      SvelteKitPWA({
+    plugins: withPwa(
+      {
+        adapter: adapter({ fallback: "404.html" }),
+        paths: { base },
+        alias: {
+          $lib: fileURLToPath(new URL("./src/lib", import.meta.url)),
+        },
+      },
+      {
         registerType: "autoUpdate",
         includeAssets: ["robots.txt"],
         manifest: {
@@ -23,17 +29,15 @@ export default defineConfig(({ command }) => {
           theme_color: "#ffffff",
           background_color: "#ffffff",
         },
-        pwaAssets: {
-          image: "static/favicon.png",
-          preset: "minimal-2023",
-          includeHtmlHeadLinks: true,
-        },
-        workbox: {
-          globPatterns: ["**/*.{js,css,html,ico,png,svg,json,woff2}"],
-          navigateFallback: `${base}/404.html`,
-          navigateFallbackDenylist: [/^\/api\//],
-        },
-      }),
-    ],
+      // pwaAssets uses transformIndexHtml which SvelteKit 3 build does not support;
+      // icons are generated separately if needed.
+        generateSW: {
+        cleanupOutdatedCaches: true,
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,json,woff2}"],
+        navigateFallback: `${base}/404.html`,
+        navigateFallbackDenylist: [/^\/api\//],
+      },
+      },
+    ),
   };
 });

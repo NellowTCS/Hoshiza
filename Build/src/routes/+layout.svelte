@@ -1,16 +1,22 @@
 <script lang="ts">
 	import favicon from '$lib/assets/favicon.svg';
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { onMount } from 'svelte';
+	import { pwaInfo } from 'virtual:pwa-info';
 	import { Updato } from '@nellowtcs/updato';
 	import { UpdateNotification } from '@nellowtcs/updato/update-ui';
 	import { COMMIT_SHA } from '$lib/config';
 	import '../app.css';
 
 	let { children } = $props();
+	const webManifestLink = $derived(pwaInfo ? pwaInfo.webManifest.linkTag : '');
 
-	onMount(() => {
+	onMount(async () => {
 		if (!browser) return;
+		if (pwaInfo) {
+			const { registerSW } = await import('virtual:pwa-register');
+			registerSW({ immediate: true });
+		}
 		// Self-update via the updato CDN, keyed by commit SHA so any push to
 		// main ships an update (see .github/workflows/updato.yml).
 		try {
@@ -37,6 +43,7 @@
 	<meta name="apple-mobile-web-app-capable" content="yes" />
 	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 	<meta name="apple-mobile-web-app-title" content="Hoshiza" />
+	{@html webManifestLink}
 </svelte:head>
 
 {@render children()}

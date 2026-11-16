@@ -36,7 +36,7 @@ export default {
 				status: 204,
 				headers: {
 					...cors,
-				'Access-Control-Allow-Headers': 'Content-Type',
+				'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 				'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS',
 					'Access-Control-Max-Age': '86400'
 				}
@@ -49,6 +49,7 @@ export default {
 			if (!clientId)
 				return json({ error: 'GITHUB_CLIENT_ID is not configured on the worker' }, 500, cors);
 			const state = crypto.randomUUID();
+			const handoffSecret = crypto.randomUUID();
 			const next = sanitizeNext(url.searchParams.get('next'));
 			const scope = sanitizeScope(url.searchParams.get('scope'));
 			// origin is the app base URL (origin + base path) so the callback can
@@ -64,6 +65,7 @@ export default {
 			const headers = new Headers({ Location: auth.toString() });
 			headers.append('Set-Cookie', cookie('oauth_state', state, STATE_MAX_AGE, secure));
 			headers.append('Set-Cookie', cookie('oauth_next', returnUrl, STATE_MAX_AGE, secure));
+			headers.append('Set-Cookie', cookie('handoff_secret', handoffSecret, STATE_MAX_AGE, secure));
 			return new Response(null, {
 				status: 302,
 				headers
@@ -73,10 +75,10 @@ export default {
 		// 2. Callback: exchange the code (with the secret) for a token, set the
 		//    httpOnly cookie, and return to the app.
 		if (url.pathname === '/callback') {
-			const code = url.searchParams.get('code');
+			const ghCode = url.searchParams.get('code');
 			const state = url.searchParams.get('state');
 			const cookies = parseCookies(req.headers.get('Cookie'));
-			if (!code || !state || state !== cookies.oauth_state)
+			if (!ghCode || !state || state !== cookies.oauth_state)
 				return new Response('Bad state', { status: 400, headers: cors });
 			if (!env.GITHUB_CLIENT_SECRET)
 				return json({ error: 'GITHUB_CLIENT_SECRET is not configured on the worker' }, 500, cors);
@@ -87,7 +89,7 @@ export default {
 				body: JSON.stringify({
 					client_id: env.GITHUB_CLIENT_ID,
 					client_secret: env.GITHUB_CLIENT_SECRET,
-					code,
+					code: ghCode,
 					redirect_uri: url.origin + '/callback'
 				})
 			});
@@ -103,11 +105,19 @@ export default {
 				});
 			}
 
-			const returnUrl = sanitizeReturn(cookies.oauth_next ?? '', '', appUrl(env));
-			const headers = new Headers({ Location: returnUrl });
+			const baseReturn = sanitizeReturn(cookies.oauth_next ?? '', '', appUrl(env));
+			const handoffSecret = cookies.handoff_secret ?? '';
+			const handoff = handoffSecret
+				? await sealToken(data.access_token, env.GITHUB_CLIENT_SECRET!, handoffSecret)
+				: '';
+			const u = new URL(baseReturn);
+			if (handoff) u.hash = 'code=' + encodeURIComponent(handoff);
+			const headers = new Headers({ Location: u.toString() });
 			headers.append('Set-Cookie', cookie('gh_token', data.access_token, TOKEN_MAX_AGE, secure));
 			headers.append('Set-Cookie', cookie('oauth_state', '', 0, secure));
 			headers.append('Set-Cookie', cookie('oauth_next', '', 0, secure));
+			if (handoffSecret) headers.append('Set-Cookie', cookie('handoff_secret', handoffSecret, 120, secure));
+			else headers.append('Set-Cookie', cookie('handoff_secret', '', 0, secure));
 			return new Response(null, {
 				status: 302,
 				headers
@@ -116,7 +126,9 @@ export default {
 
 		// 3. Authenticated proxy: /api/github?path=/user/repos
 		if (url.pathname === '/api/github') {
-			const token = parseCookies(req.headers.get('Cookie')).gh_token;
+			const auth = req.headers.get('Authorization') ?? '';
+			const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+			const token = parseCookies(req.headers.get('Cookie')).gh_token || bearer;
 			if (!token) return json({ error: 'unauthorized' }, 401, cors);
 
 			const path = url.searchParams.get('path') ?? '/user';
@@ -157,7 +169,24 @@ export default {
 			return out;
 		}
 
-		// 4. Logout: clear the session cookie.
+		// 4. Exchange handoff code for token (iOS/ITP cookie fallback). Requires the bound
+		// secret cookie and is short-lived; cookie is cleared to limit reuse.
+		if (url.pathname === '/api/session' && req.method === 'POST') {
+			if (!env.GITHUB_CLIENT_SECRET)
+				return json({ error: 'not configured' }, 500, cors);
+			const cookies = parseCookies(req.headers.get('Cookie'));
+			let handoff = '';
+			try {
+				const b = (await req.json()) as { code?: string };
+				handoff = b.code ?? '';
+			} catch {}
+			const token = await openToken(handoff, env.GITHUB_CLIENT_SECRET, cookies.handoff_secret ?? '');
+			const out = token ? json({ token }, 200, cors) : json({ error: 'invalid or expired code' }, 401, cors);
+			out.headers.append('Set-Cookie', cookie('handoff_secret', '', 0, secure));
+			return out;
+		}
+
+		// 5. Logout: clear the session cookie.
 		if (url.pathname === '/logout') {
 			const next = sanitizeNext(url.searchParams.get('next'));
 			const returnUrl = sanitizeReturn(url.searchParams.get('origin') ?? '', next, appUrl(env));
@@ -276,6 +305,62 @@ function cookie(name: string, value: string, maxAge: number, secure: boolean): s
 	if (secure) parts.push('Secure');
 	parts.push(`Max-Age=${maxAge}`);
 	return parts.join('; ');
+}
+
+
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+
+function b64u(buf: ArrayBuffer | Uint8Array): string {
+	const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+	let s = '';
+	for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+	return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function unb64u(s: string): Uint8Array {
+	s = s.replace(/-/g, '+').replace(/_/g, '/');
+	while (s.length % 4) s += '=';
+	const bin = atob(s);
+	const out = new Uint8Array(bin.length);
+	for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+	return out;
+}
+async function sealKey(secret: string): Promise<CryptoKey> {
+	const raw = await crypto.subtle.digest('SHA-256', enc.encode(secret));
+	return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+async function sha256Hex(s: string): Promise<string> {
+	const buf = await crypto.subtle.digest('SHA-256', enc.encode(s));
+	return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+/** Encrypt token into a short-lived opaque handoff code bound to a secret cookie. */
+export async function sealToken(token: string, secret: string, bind: string): Promise<string> {
+	const key = await sealKey(secret);
+	const iv = crypto.getRandomValues(new Uint8Array(12));
+	const h = bind ? await sha256Hex(bind) : '';
+	const payload = enc.encode(JSON.stringify({ t: token, exp: Date.now() + 120000, h }));
+	const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, payload);
+	const packed = new Uint8Array(iv.length + ct.byteLength);
+	packed.set(iv, 0);
+	packed.set(new Uint8Array(ct), iv.length);
+	return b64u(packed);
+}
+export async function openToken(code: string, secret: string, bind: string): Promise<string | null> {
+	try {
+		const packed = unb64u(code);
+		if (packed.length < 13) return null;
+		const iv = packed.slice(0, 12);
+		const ct = packed.slice(12);
+		const key = await sealKey(secret);
+		const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+		const data = JSON.parse(dec.decode(pt)) as { t?: string; exp?: number; h?: string };
+		if (!data.t || typeof data.exp !== 'number' || Date.now() > data.exp) return null;
+		// Require the bound HttpOnly cookie (not present in URL/history/referrers).
+		if (!bind || !data.h || data.h !== (await sha256Hex(bind))) return null;
+		return data.t;
+	} catch {
+		return null;
+	}
 }
 
 export function parseCookies(h: string | null): Record<string, string> {

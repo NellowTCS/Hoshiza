@@ -6,6 +6,8 @@ import {
   GhAuthError,
   fetchSessionInfo,
   fetchAllRepos,
+  consumeTokenFromUrl,
+  clearSessionToken,
 } from "./api";
 import { loadRepos, saveRepos, isReposCacheStale } from "./repoCache";
 import { suggestStatus } from "./suggest";
@@ -665,6 +667,7 @@ let lastRepoFetchAt = 0;
 
 export async function init(): Promise<void> {
   if (session.loading) return;
+  await consumeTokenFromUrl();
   session.pending = false;
   session.loading = true;
   session.error = null;
@@ -732,6 +735,7 @@ export async function refreshRepos(): Promise<void> {
 }
 
 export function signOut(): void {
+  clearSessionToken();
   session.viewer = null;
   session.scopes = [];
   session.signedIn = false;
