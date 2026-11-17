@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta
+      name="description"
+      content="Hoshiza: a GitHub repo triage board and status map."
+    />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="/Hoshiza/favicon.ico" sizes="any" />
+    <link
+      rel="apple-touch-icon"
+      href="/Hoshiza/apple-touch-icon-180x180.png"
+    />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <script>
+      // Apply the saved/system theme before first paint so there is no flash.
+      // Light is the default scene; dark only when the system asks for it.
+      (function () {
+        try {
+          var t = localStorage.getItem("hoshiza_theme");
+          var dark =
+            t === "dark" ||
+            (!t && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.dataset.theme = dark ? "dark" : "light";
+        } catch (e) {
+          document.documentElement.dataset.theme = "light";
+        }
+      })();
+    </script>
+    <link href="/Hoshiza/_app/immutable/entry/start.Cw2SroCJ.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/entry/payload.DSmR2FwN.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/DclECHGd.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/DYA7wGiW.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/COp9EM8n.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/oQUVlp5D.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/DNxof5V1.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/entry/app.C7NWa-AQ.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/nodes/0.evkY40ty.js" rel="modulepreload">
+		<link href="/Hoshiza/_app/immutable/chunks/jFfbYVbJ.js" rel="modulepreload">
+		
+		<link href="/Hoshiza/_app/immutable/assets/0.CH4i1Clo.css" rel="stylesheet">
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div style="display: contents">
+			<script>
+				{
+					__sveltekit_6sq57d = {
+						base: "/Hoshiza",
+						version: "1794946464857",
+						assets: "/Hoshiza"
+					};
+
+					const element = document.currentScript.parentElement;
+
+					import("/Hoshiza/_app/immutable/entry/start.Cw2SroCJ.js").then(async (kit) => {
+						kit.init(__sveltekit_6sq57d);
+						const app = await import("/Hoshiza/_app/immutable/entry/app.C7NWa-AQ.js");
+						kit.start(app, element);
+					});
+				}
+			</script>
+		</div>
+  </body>
+</html>
