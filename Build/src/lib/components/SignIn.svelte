@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { login } from '$lib/api';
-	import favicon from '$lib/assets/favicon.svg';
+	import { login } from '#lib/api.js';
+	import favicon from '#lib/assets/favicon.svg';
 </script>
 
 <section class="signin">

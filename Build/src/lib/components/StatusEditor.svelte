@@ -8,8 +8,8 @@
 		moveStatus,
 		moveStatusTo,
 		resetStatuses
-	} from '$lib/state.svelte';
-	import { ChevronUp, ChevronDown, Trash2, Plus, GripVertical } from 'lucide-svelte';
+	} from '#lib/state.svelte.js';
+	import { ChevronUp, ChevronDown, Trash2, Plus, GripVertical } from '@lucide/svelte';
 
 	let newLabel = $state('');
 	let newColor = $state('#6a9fff');

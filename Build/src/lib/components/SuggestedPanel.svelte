@@ -6,9 +6,9 @@
 		statusLabel,
 		suggestedFor,
 		ui
-	} from '$lib/state.svelte';
-	import { suggestDismissed, dismissSuggestions } from '$lib/suggestDismiss.svelte';
-	import { Sparkles, Check, X } from 'lucide-svelte';
+	} from '#lib/state.svelte.js';
+	import { suggestDismissed, dismissSuggestions } from '#lib/suggestDismiss.svelte.js';
+	import { Sparkles, Check, X } from '@lucide/svelte';
 
 	const items = $derived(suggestedRepos());
 </script>

@@ -1,11 +1,11 @@
 <script lang="ts">
-	import favicon from '$lib/assets/favicon.svg';
+	import favicon from '#lib/assets/favicon.svg';
 	import { browser } from '$app/env';
 	import { onMount } from 'svelte';
 	import { pwaInfo } from 'virtual:pwa-info';
 	import { Updato } from '@nellowtcs/updato';
 	import { UpdateNotification } from '@nellowtcs/updato/update-ui';
-	import { COMMIT_SHA } from '$lib/config';
+	import { COMMIT_SHA } from '#lib/config.js';
 	import '../app.css';
 
 	let { children } = $props();

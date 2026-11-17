@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { sortedStatuses, filteredRepos, store, session, vanishedRepos, forgetRepo } from '$lib/state.svelte';
-	import { suggestDismissed, showSuggestions } from '$lib/suggestDismiss.svelte';
-	import { login } from '$lib/api';
-	import { drag } from '$lib/boardDrag.svelte';
-	import { orgOf } from '$lib/format';
+	import { sortedStatuses, filteredRepos, store, session, vanishedRepos, forgetRepo } from '#lib/state.svelte.js';
+	import { suggestDismissed, showSuggestions } from '#lib/suggestDismiss.svelte.js';
+	import { login } from '#lib/api.js';
+	import { drag } from '#lib/boardDrag.svelte.js';
+	import { orgOf } from '#lib/format.js';
 	import BoardColumn from './BoardColumn.svelte';
 	import SuggestedPanel from './SuggestedPanel.svelte';
-	import { Info } from 'lucide-svelte';
+	import { Info } from '@lucide/svelte';
 
 	const columns = $derived(
 		sortedStatuses().map((status) => ({

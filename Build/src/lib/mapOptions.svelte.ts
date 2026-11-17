@@ -1,4 +1,4 @@
-import type { GroupBy, SizeBy } from "$lib/types";
+import type { GroupBy, SizeBy } from "#lib/types.js";
 
 /**
  * Shared status-map options

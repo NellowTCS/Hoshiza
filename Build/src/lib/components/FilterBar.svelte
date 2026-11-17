@@ -7,10 +7,10 @@
 		repos,
 		ui,
 		FILTERS_KEY
-	} from '$lib/state.svelte';
-	import type { GroupBy, SizeBy } from '$lib/types';
-	import { mapOptions } from '$lib/mapOptions.svelte';
-	import { Search, SlidersHorizontal, ChevronDown, X } from 'lucide-svelte';
+	} from '#lib/state.svelte.js';
+	import type { GroupBy, SizeBy } from '#lib/types.js';
+	import { mapOptions } from '#lib/mapOptions.svelte.js';
+	import { Search, SlidersHorizontal, ChevronDown, X } from '@lucide/svelte';
 	import MultiSelect from './MultiSelect.svelte';
 
 	// Persist filter/exclude selections (search, language/org includes and

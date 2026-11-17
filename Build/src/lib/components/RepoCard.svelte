@@ -1,9 +1,9 @@
 <script lang="ts">
-	import type { Repo } from '$lib/types';
-	import { store, ui, statusLabel, suggestedFor } from '$lib/state.svelte';
-	import { longPressDrag, drag } from '$lib/boardDrag.svelte';
-	import { formatStars, timeAgo, orgOf } from '$lib/format';
-	import { Star, Lock, GitFork, Archive, Sparkles, FileText } from 'lucide-svelte';
+	import type { Repo } from '#lib/types.js';
+	import { store, ui, statusLabel, suggestedFor } from '#lib/state.svelte.js';
+	import { longPressDrag, drag } from '#lib/boardDrag.svelte.js';
+	import { formatStars, timeAgo, orgOf } from '#lib/format.js';
+	import { Star, Lock, GitFork, Archive, Sparkles, FileText } from '@lucide/svelte';
 
 	let { repo }: { repo: Repo } = $props();
 

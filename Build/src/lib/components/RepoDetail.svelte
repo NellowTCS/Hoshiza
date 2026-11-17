@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Repo } from '$lib/types';
+	import type { Repo } from '#lib/types.js';
 	import {
 		store,
 		assignStatus,
@@ -9,9 +9,9 @@
 		sortedStatuses,
 		suggestedFor,
 		statusLabel
-	} from '$lib/state.svelte';
-	import { formatStars, timeAgo, orgOf } from '$lib/format';
-	import { ExternalLink, Star, Lock, GitFork, Archive, Plus } from 'lucide-svelte';
+	} from '#lib/state.svelte.js';
+	import { formatStars, timeAgo, orgOf } from '#lib/format.js';
+	import { ExternalLink, Star, Lock, GitFork, Archive, Plus } from '@lucide/svelte';
 
 	let { repo }: { repo: Repo } = $props();
 

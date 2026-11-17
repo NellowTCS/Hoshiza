@@ -2,18 +2,18 @@
 	import { onDestroy } from 'svelte';
 	import { Network } from 'vis-network';
 	import type { Node as VisNode, Edge as VisEdge, Options } from 'vis-network';
-	import type { Repo } from '$lib/types';
+	import type { Repo } from '#lib/types.js';
 	import {
 		store,
 		ui,
 		filteredRepos,
 		sortedStatuses,
 		statusById
-	} from '$lib/state.svelte';
-	import { mapOptions } from '$lib/mapOptions.svelte';
-	import { monthsSincePush } from '$lib/suggest';
-	import { formatStars, orgOf, timeAgo } from '$lib/format';
-	import { theme } from '$lib/theme.svelte';
+	} from '#lib/state.svelte.js';
+	import { mapOptions } from '#lib/mapOptions.svelte.js';
+	import { monthsSincePush } from '#lib/suggest.js';
+	import { formatStars, orgOf, timeAgo } from '#lib/format.js';
+	import { theme } from '#lib/theme.svelte.js';
 
 	const REPO_ID = 'r:';
 	const HUB_ID = 'h:';

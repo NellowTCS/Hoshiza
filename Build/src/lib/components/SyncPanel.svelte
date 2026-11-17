@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { store, session, sync, pushToGitHub, pullFromGitHub, disableGithubSync, exportJson, importFile } from '$lib/state.svelte';
-	import { login } from '$lib/api';
-	import { DATA_REPO } from '$lib/state.svelte';
-	import { CloudUpload, CloudDownload, Loader2, X, Download, Upload } from 'lucide-svelte';
+	import { store, session, sync, pushToGitHub, pullFromGitHub, disableGithubSync, exportJson, importFile } from '#lib/state.svelte.js';
+	import { login } from '#lib/api.js';
+	import { DATA_REPO } from '#lib/state.svelte.js';
+	import { CloudUpload, CloudDownload, Loader2, X, Download, Upload } from '@lucide/svelte';
 
 	let busy = $state(false);
 	let msg = $state('');

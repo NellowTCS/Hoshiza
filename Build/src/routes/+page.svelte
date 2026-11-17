@@ -1,20 +1,20 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { isConfigured } from '$lib/config';
-	import { init, session, ui, repos, store, sync, exportJson, importFile } from '$lib/state.svelte';
-	import { initTheme, toggleTheme, theme } from '$lib/theme.svelte';
-	import { logout } from '$lib/api';
-	import { Columns3, Map, Settings2, RefreshCw, Download, Upload, LogOut, Sun, Moon, Loader2, CloudUpload } from 'lucide-svelte';
-	import favicon from '$lib/assets/favicon.svg';
-	import SignIn from '$lib/components/SignIn.svelte';
-	import Board from '$lib/components/Board.svelte';
-	import StatusMap from '$lib/components/StatusMap.svelte';
-	import FilterBar from '$lib/components/FilterBar.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import StatusEditor from '$lib/components/StatusEditor.svelte';
-	import SyncPanel from '$lib/components/SyncPanel.svelte';
-	import RepoDetail from '$lib/components/RepoDetail.svelte';
-	import BottomNav from '$lib/components/BottomNav.svelte';
+	import { isConfigured } from '#lib/config.js';
+	import { init, session, ui, repos, store, sync, exportJson, importFile } from '#lib/state.svelte.js';
+	import { initTheme, toggleTheme, theme } from '#lib/theme.svelte.js';
+	import { logout } from '#lib/api.js';
+	import { Columns3, Map, Settings2, RefreshCw, Download, Upload, LogOut, Sun, Moon, Loader2, CloudUpload } from '@lucide/svelte';
+	import favicon from '#lib/assets/favicon.svg';
+	import SignIn from '#lib/components/SignIn.svelte';
+	import Board from '#lib/components/Board.svelte';
+	import StatusMap from '#lib/components/StatusMap.svelte';
+	import FilterBar from '#lib/components/FilterBar.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import StatusEditor from '#lib/components/StatusEditor.svelte';
+	import SyncPanel from '#lib/components/SyncPanel.svelte';
+	import RepoDetail from '#lib/components/RepoDetail.svelte';
+	import BottomNav from '#lib/components/BottomNav.svelte';
 
 	let importInput = $state<HTMLInputElement>();
 	let importError = $state<string | null>(null);

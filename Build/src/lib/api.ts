@@ -34,24 +34,27 @@ export interface GhMeta {
   scopes: string[];
 }
 
-
 const TOKEN_KEY = "hoshiza_gh_token";
 
 export function storeSessionToken(token: string): void {
-  if (typeof sessionStorage !== "undefined") sessionStorage.setItem(TOKEN_KEY, token);
+  if (typeof sessionStorage !== "undefined")
+    sessionStorage.setItem(TOKEN_KEY, token);
 }
 export function getSessionToken(): string | null {
   if (typeof sessionStorage === "undefined") return null;
   return sessionStorage.getItem(TOKEN_KEY);
 }
 export function clearSessionToken(): void {
-  if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(TOKEN_KEY);
+  if (typeof sessionStorage !== "undefined")
+    sessionStorage.removeItem(TOKEN_KEY);
 }
 
 /** Exchange opaque code (from URL fragment) for a session token. */
 export async function consumeTokenFromUrl(): Promise<void> {
   if (typeof window === "undefined") return;
-  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : "";
   if (!hash) return;
   const params = new URLSearchParams(hash);
   const code = params.get("code");
@@ -60,7 +63,13 @@ export async function consumeTokenFromUrl(): Promise<void> {
     params.delete("code");
     params.delete("token");
     const rest = params.toString();
-    history.replaceState(null, "", window.location.pathname + window.location.search + (rest ? "#" + rest : ""));
+    history.replaceState(
+      null,
+      "",
+      window.location.pathname +
+        window.location.search +
+        (rest ? "#" + rest : ""),
+    );
   }
   if (!code) return;
   try {

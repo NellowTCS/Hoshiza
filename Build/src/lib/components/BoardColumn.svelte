@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { Repo, Status } from '$lib/types';
-	import { moveRepo } from '$lib/state.svelte';
-	import { drag } from '$lib/boardDrag.svelte';
+	import type { Repo, Status } from '#lib/types.js';
+	import { moveRepo } from '#lib/state.svelte.js';
+	import { drag } from '#lib/boardDrag.svelte.js';
 	import RepoCard from './RepoCard.svelte';
 
 	let { status, repos }: { status: Status; repos: Repo[] } = $props();

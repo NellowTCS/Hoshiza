@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { ui } from '$lib/state.svelte';
-	import { Columns3, Map } from 'lucide-svelte';
+	import { ui } from '#lib/state.svelte.js';
+	import { Columns3, Map } from '@lucide/svelte';
 </script>
 
 <nav class="bnav" aria-label="Views">
