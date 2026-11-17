@@ -14,7 +14,9 @@ export default defineConfig(({ command }) => {
       registerType: "autoUpdate",
       injectRegister: null,
       includeAssets: ["robots.txt"],
+      pwaAssets: { config: true },
       manifest: {
+        id: `${base}/`,
         name: "Hoshiza",
         short_name: "Hoshiza",
         description: "A GitHub repo triage board and map",
@@ -23,6 +25,36 @@ export default defineConfig(({ command }) => {
         display: "standalone",
         theme_color: "#ffffff",
         background_color: "#ffffff",
+        screenshots: [
+          {
+            src: `${base}/screenshots/main.png`,
+            sizes: "1677x932",
+            form_factor: "wide",
+            type: "image/png",
+            label: "Repo triage board",
+          },
+          {
+            src: `${base}/screenshots/map-view.png`,
+            sizes: "1677x932",
+            form_factor: "wide",
+            type: "image/png",
+            label: "Status map",
+          },
+          {
+            src: `${base}/screenshots/main-mobile.png`,
+            sizes: "392x857",
+            form_factor: "narrow",
+            type: "image/png",
+            label: "Repo triage board on mobile",
+          },
+          {
+            src: `${base}/screenshots/map-view-mobile.png`,
+            sizes: "392x857",
+            form_factor: "narrow",
+            type: "image/png",
+            label: "Status map on mobile",
+          },
+        ],
       },
       generateSW: {
         cleanupOutdatedCaches: true,
