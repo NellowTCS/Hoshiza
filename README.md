@@ -31,8 +31,8 @@ Your triage state is a single JSON file pushed to a private `hoshiza-data` repo 
 GitHub can't do the OAuth dance from a browser alone: the token exchange needs a client secret, and GitHub blocks CORS at that endpoint. So a small Cloudflare Worker holds the secret and does three things:
 
 1. `/login` sends you to GitHub with a random state cookie; `/callback` exchanges the code server-side and drops the token in an `HttpOnly` cookie scoped to the Worker.
-2. `/api/github?path=...` proxies GitHub API calls using that cookie. The token never reaches the browser, let alone the app origin.
-3. `/logout` clears the cookie.
+2. `/api/github?path=...` proxies GitHub API calls using that cookie. On iOS, where cross-site cookies are blocked, the browser redeems the fragment code with its PKCE verifier and sends the token as a Bearer header instead.
+3. `/logout` clears the cookie and the browser's copy of the token.
 
 The Worker requests the `repo` scope at login on purpose: without it GitHub only exposes public repos, and the board would report perfectly alive private repos as deleted. Learned that one the hard way.
 

@@ -24,6 +24,8 @@ const STATE_MAX_AGE = 600; // 10min OAuth round trip
 
 const SCOPE_MAX_LENGTH = 200;
 const PATH_MAX_LENGTH = 512;
+const CHALLENGE_PATTERN = /^[0-9a-f]{64}$/;
+const VERIFIER_MAX_LENGTH = 128;
 
 export default {
 	async fetch(req: Request, env: Env): Promise<Response> {
@@ -43,13 +45,15 @@ export default {
 			});
 		}
 
-		// 1. Kick off login: random state cookie, then off to GitHub.
+		// 1. Kick off login: carry the PKCE challenge in state, then off to GitHub.
 		if (url.pathname === '/login') {
 			const clientId = env.GITHUB_CLIENT_ID;
 			if (!clientId)
 				return json({ error: 'GITHUB_CLIENT_ID is not configured on the worker' }, 500, cors);
-			const state = crypto.randomUUID();
-			const handoffSecret = crypto.randomUUID();
+			const challenge = url.searchParams.get('code_challenge') ?? '';
+			if (!CHALLENGE_PATTERN.test(challenge))
+				return json({ error: 'invalid or missing code_challenge' }, 400, cors);
+			const state = `${crypto.randomUUID()}.${challenge}`;
 			const next = sanitizeNext(url.searchParams.get('next'));
 			const scope = sanitizeScope(url.searchParams.get('scope'));
 			// origin is the app base URL (origin + base path) so the callback can
@@ -65,7 +69,6 @@ export default {
 			const headers = new Headers({ Location: auth.toString() });
 			headers.append('Set-Cookie', cookie('oauth_state', state, STATE_MAX_AGE, secure));
 			headers.append('Set-Cookie', cookie('oauth_next', returnUrl, STATE_MAX_AGE, secure));
-			headers.append('Set-Cookie', cookie('handoff_secret', handoffSecret, STATE_MAX_AGE, secure));
 			return new Response(null, {
 				status: 302,
 				headers
@@ -80,7 +83,12 @@ export default {
 			const cookies = parseCookies(req.headers.get('Cookie'));
 			if (!ghCode || !state || state !== cookies.oauth_state)
 				return new Response('Bad state', { status: 400, headers: cors });
-			if (!env.GITHUB_CLIENT_SECRET)
+			const dot = state.indexOf('.');
+			const challenge = dot > 0 ? state.slice(dot + 1) : '';
+			if (!CHALLENGE_PATTERN.test(challenge))
+				return new Response('Bad state', { status: 400, headers: cors });
+			const clientSecret = env.GITHUB_CLIENT_SECRET;
+			if (!clientSecret)
 				return json({ error: 'GITHUB_CLIENT_SECRET is not configured on the worker' }, 500, cors);
 
 			const r = await fetch(GH + '/login/oauth/access_token', {
@@ -88,7 +96,7 @@ export default {
 				headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
 				body: JSON.stringify({
 					client_id: env.GITHUB_CLIENT_ID,
-					client_secret: env.GITHUB_CLIENT_SECRET,
+					client_secret: clientSecret,
 					code: ghCode,
 					redirect_uri: url.origin + '/callback'
 				})
@@ -106,18 +114,13 @@ export default {
 			}
 
 			const baseReturn = sanitizeReturn(cookies.oauth_next ?? '', '', appUrl(env));
-			const handoffSecret = cookies.handoff_secret ?? '';
-			const handoff = handoffSecret
-				? await sealToken(data.access_token, env.GITHUB_CLIENT_SECRET!, handoffSecret)
-				: '';
+			const handoff = await sealToken(data.access_token, clientSecret, challenge);
 			const u = new URL(baseReturn);
-			if (handoff) u.hash = 'code=' + encodeURIComponent(handoff);
+			u.hash = 'code=' + encodeURIComponent(handoff);
 			const headers = new Headers({ Location: u.toString() });
 			headers.append('Set-Cookie', cookie('gh_token', data.access_token, TOKEN_MAX_AGE, secure));
 			headers.append('Set-Cookie', cookie('oauth_state', '', 0, secure));
 			headers.append('Set-Cookie', cookie('oauth_next', '', 0, secure));
-			if (handoffSecret) headers.append('Set-Cookie', cookie('handoff_secret', handoffSecret, 120, secure));
-			else headers.append('Set-Cookie', cookie('handoff_secret', '', 0, secure));
 			return new Response(null, {
 				status: 302,
 				headers
@@ -169,21 +172,24 @@ export default {
 			return out;
 		}
 
-		// 4. Exchange handoff code for token (iOS/ITP cookie fallback). Requires the bound
-		// secret cookie and is short-lived; cookie is cleared to limit reuse.
+		// 4. Exchange handoff code for token (iOS/ITP fallback). The sealed fragment
+		// is useless without the verifier held in the app tab's sessionStorage.
 		if (url.pathname === '/api/session' && req.method === 'POST') {
 			if (!env.GITHUB_CLIENT_SECRET)
 				return json({ error: 'not configured' }, 500, cors);
-			const cookies = parseCookies(req.headers.get('Cookie'));
 			let handoff = '';
+			let verifier = '';
 			try {
-				const b = (await req.json()) as { code?: string };
+				const b = (await req.json()) as { code?: string; verifier?: string };
 				handoff = b.code ?? '';
+				verifier = b.verifier ?? '';
 			} catch {}
-			const token = await openToken(handoff, env.GITHUB_CLIENT_SECRET, cookies.handoff_secret ?? '');
-			const out = token ? json({ token }, 200, cors) : json({ error: 'invalid or expired code' }, 401, cors);
-			out.headers.append('Set-Cookie', cookie('handoff_secret', '', 0, secure));
-			return out;
+			if (!verifier || verifier.length > VERIFIER_MAX_LENGTH)
+				return json({ error: 'invalid or expired code' }, 401, cors);
+			const token = await openToken(handoff, env.GITHUB_CLIENT_SECRET, verifier);
+			return token
+				? json({ token }, 200, cors)
+				: json({ error: 'invalid or expired code' }, 401, cors);
 		}
 
 		// 5. Logout: clear the session cookie.
@@ -333,19 +339,19 @@ async function sha256Hex(s: string): Promise<string> {
 	const buf = await crypto.subtle.digest('SHA-256', enc.encode(s));
 	return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
-/** Encrypt token into a short-lived opaque handoff code bound to a secret cookie. */
-export async function sealToken(token: string, secret: string, bind: string): Promise<string> {
+/** Encrypt a token into a short-lived opaque code bound to a PKCE challenge hex. */
+export async function sealToken(token: string, secret: string, challenge: string): Promise<string> {
 	const key = await sealKey(secret);
 	const iv = crypto.getRandomValues(new Uint8Array(12));
-	const h = bind ? await sha256Hex(bind) : '';
-	const payload = enc.encode(JSON.stringify({ t: token, exp: Date.now() + 120000, h }));
+	const payload = enc.encode(JSON.stringify({ t: token, exp: Date.now() + 120000, h: challenge }));
 	const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, payload);
 	const packed = new Uint8Array(iv.length + ct.byteLength);
 	packed.set(iv, 0);
 	packed.set(new Uint8Array(ct), iv.length);
 	return b64u(packed);
 }
-export async function openToken(code: string, secret: string, bind: string): Promise<string | null> {
+/** Decrypt a handoff code only when the caller supplies the matching verifier. */
+export async function openToken(code: string, secret: string, verifier: string): Promise<string | null> {
 	try {
 		const packed = unb64u(code);
 		if (packed.length < 13) return null;
@@ -355,8 +361,8 @@ export async function openToken(code: string, secret: string, bind: string): Pro
 		const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
 		const data = JSON.parse(dec.decode(pt)) as { t?: string; exp?: number; h?: string };
 		if (!data.t || typeof data.exp !== 'number' || Date.now() > data.exp) return null;
-		// Require the bound HttpOnly cookie (not present in URL/history/referrers).
-		if (!bind || !data.h || data.h !== (await sha256Hex(bind))) return null;
+		// The fragment is public; only the tab that started login holds the verifier.
+		if (!verifier || !data.h || data.h !== (await sha256Hex(verifier))) return null;
 		return data.t;
 	} catch {
 		return null;

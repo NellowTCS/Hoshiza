@@ -1,17 +1,33 @@
-import { describe, it, expect } from 'vitest';
-import {
+import { describe, it, expect, vi } from 'vitest';
+import workerHandler, {
 	appUrl,
 	corsHeaders,
 	isAllowedPath,
+	openToken,
 	parseCookies,
 	sanitizeNext,
 	sanitizeReturn,
 	sanitizeScope,
+	sealToken,
 	type Env
 } from '../src/worker';
 
 const DEFAULT_SCOPES = 'read:user public_repo read:org';
 const FALLBACK = 'https://nellowtcs.me/Hoshiza';
+
+// SHA-256 derived independently with node:crypto, not with the worker's helper.
+const PKCE_VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+const PKCE_CHALLENGE = '13d31e961a1ad8ec2f16b10c4c982e0876a878ad6df144566ee1894acb70f9c3';
+
+const LOGIN_ENV: Env = {
+	GITHUB_CLIENT_ID: 'test-client-id',
+	APP_URL: FALLBACK
+};
+const SESSION_ENV: Env = { GITHUB_CLIENT_SECRET: 'worker-test-secret' };
+
+function callWorker(req: Request, env: Env = LOGIN_ENV): Promise<Response> {
+	return workerHandler.fetch(req, env);
+}
 
 function cors(origin: string | null, env: Env = {}): Record<string, string> {
 	const headers = new Headers();
@@ -194,5 +210,135 @@ describe('isAllowedPath', () => {
 
 	it('requires a full file name for contents writes', () => {
 		expect(isAllowedPath('/repos/a/b/contents/../state.json', 'PUT')).toBe(false);
+	});
+});
+
+describe('PKCE handoff seal', () => {
+	const secret = 'worker-test-secret';
+
+	it('opens a sealed code with the matching verifier', async () => {
+		const code = await sealToken('gh-test-token', secret, PKCE_CHALLENGE);
+		expect(await openToken(code, secret, PKCE_VERIFIER)).toBe('gh-test-token');
+	});
+
+	it('refuses a sealed code with a different verifier', async () => {
+		const code = await sealToken('gh-test-token', secret, PKCE_CHALLENGE);
+		expect(await openToken(code, secret, 'a-different-verifier')).toBeNull();
+	});
+
+	it('refuses a sealed code without a verifier', async () => {
+		const code = await sealToken('gh-test-token', secret, PKCE_CHALLENGE);
+		expect(await openToken(code, secret, '')).toBeNull();
+	});
+
+	it('refuses the challenge itself as a verifier', async () => {
+		const code = await sealToken('gh-test-token', secret, PKCE_CHALLENGE);
+		expect(await openToken(code, secret, PKCE_CHALLENGE)).toBeNull();
+	});
+
+	it('refuses a tampered code', async () => {
+		const code = await sealToken('gh-test-token', secret, PKCE_CHALLENGE);
+		expect(await openToken(code.slice(0, -2) + 'xx', secret, PKCE_VERIFIER)).toBeNull();
+	});
+});
+
+describe('/login PKCE challenge', () => {
+	it('rejects a login that omits the code_challenge', async () => {
+		const res = await callWorker(new Request('https://worker.example/login'));
+		expect(res.status).toBe(400);
+	});
+
+	it('embeds the challenge in state and sets no handoff_secret cookie', async () => {
+		const res = await callWorker(
+			new Request(`https://worker.example/login?code_challenge=${PKCE_CHALLENGE}`)
+		);
+		expect(res.status).toBe(302);
+		const cookies = res.headers.getSetCookie();
+		expect(cookies.some(c => c.startsWith('handoff_secret='))).toBe(false);
+		const state = cookies
+			.find(c => c.startsWith('oauth_state='))
+			?.slice('oauth_state='.length)
+			.split(';')[0];
+		expect(state?.endsWith(`.${PKCE_CHALLENGE}`)).toBe(true);
+		const location = new URL(res.headers.get('Location') ?? '');
+		expect(location.searchParams.get('state')).toBe(state);
+	});
+});
+
+describe('/callback PKCE sealing', () => {
+	it('seals the fragment against the challenge carried in state', async () => {
+		vi.stubGlobal(
+			'fetch',
+			async () =>
+				new Response(JSON.stringify({ access_token: 'gh-test-token' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+		);
+		try {
+			const state = `nonce.${PKCE_CHALLENGE}`;
+			const res = await callWorker(
+				new Request(
+					`https://worker.example/callback?code=gh-oauth-code&state=${encodeURIComponent(state)}`,
+					{
+						headers: {
+							Cookie: `oauth_state=${state}; oauth_next=${encodeURIComponent(FALLBACK)}`
+						}
+					}
+				),
+				SESSION_ENV
+			);
+			expect(res.status).toBe(302);
+			const location = new URL(res.headers.get('Location') ?? '');
+			const code = new URLSearchParams(location.hash.slice(1)).get('code');
+			expect(code).toBeTruthy();
+			expect(await openToken(code ?? '', 'worker-test-secret', PKCE_VERIFIER)).toBe('gh-test-token');
+			expect(res.headers.getSetCookie().some(c => c.startsWith('handoff_secret='))).toBe(false);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+});
+
+describe('/api/session PKCE redemption', () => {
+	it('returns the token for a matching verifier without any cookies', async () => {
+		const code = await sealToken('gh-test-token', 'worker-test-secret', PKCE_CHALLENGE);
+		const res = await callWorker(
+			new Request('https://worker.example/api/session', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ code, verifier: PKCE_VERIFIER })
+			}),
+			SESSION_ENV
+		);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ token: 'gh-test-token' });
+		expect(res.headers.getSetCookie()).toEqual([]);
+	});
+
+	it('rejects a mismatched verifier', async () => {
+		const code = await sealToken('gh-test-token', 'worker-test-secret', PKCE_CHALLENGE);
+		const res = await callWorker(
+			new Request('https://worker.example/api/session', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ code, verifier: 'a-different-verifier' })
+			}),
+			SESSION_ENV
+		);
+		expect(res.status).toBe(401);
+	});
+
+	it('rejects a missing verifier', async () => {
+		const code = await sealToken('gh-test-token', 'worker-test-secret', PKCE_CHALLENGE);
+		const res = await callWorker(
+			new Request('https://worker.example/api/session', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ code })
+			}),
+			SESSION_ENV
+		);
+		expect(res.status).toBe(401);
 	});
 });

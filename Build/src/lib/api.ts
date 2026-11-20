@@ -35,6 +35,41 @@ export interface GhMeta {
 }
 
 const TOKEN_KEY = "hoshiza_gh_token";
+const PKCE_VERIFIER_KEY = "hoshiza_pkce_verifier";
+
+function storePkceVerifier(verifier: string): void {
+  if (typeof sessionStorage !== "undefined")
+    sessionStorage.setItem(PKCE_VERIFIER_KEY, verifier);
+}
+
+function takePkceVerifier(): string | null {
+  if (typeof sessionStorage === "undefined") return null;
+  const verifier = sessionStorage.getItem(PKCE_VERIFIER_KEY);
+  sessionStorage.removeItem(PKCE_VERIFIER_KEY);
+  return verifier;
+}
+
+/** 32 random bytes, base64url encoded. */
+function createVerifier(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+function challengeFor(verifier: string): Promise<string> {
+  const data = new TextEncoder().encode(verifier);
+  return crypto.subtle
+    .digest("SHA-256", data)
+    .then((digest) =>
+      [...new Uint8Array(digest)]
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(""),
+    );
+}
 
 export function storeSessionToken(token: string): void {
   if (typeof sessionStorage !== "undefined")
@@ -72,18 +107,25 @@ export async function consumeTokenFromUrl(): Promise<void> {
     );
   }
   if (!code) return;
+  const verifier = takePkceVerifier();
+  if (!verifier) {
+    console.warn("session handoff code found without a matching verifier");
+    return;
+  }
   try {
     const r = await fetch(`${WORKER_URL}/api/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, verifier }),
     });
-    if (!r.ok) return;
+    if (!r.ok) {
+      console.warn(`session handoff rejected: ${r.status}`);
+      return;
+    }
     const j = (await r.json()) as { token?: string };
     if (j.token) storeSessionToken(j.token);
-  } catch {
-    /* cookie-based session may still work */
+  } catch (e) {
+    console.warn("session handoff request failed:", e);
   }
 }
 
@@ -135,10 +177,19 @@ async function apiMessage(r: Response): Promise<string> {
   }
 }
 
-/** Kick off the OAuth flow. The Worker handles the exchange and sets the cookie. */
-export function login(next = "/", scope = READ_SCOPES): void {
+/**
+ * Kick off the OAuth flow
+ */
+export async function login(next = "/", scope = READ_SCOPES): Promise<void> {
+  if (!globalThis.crypto?.subtle) {
+    console.error("PKCE requires crypto.subtle (a secure context)");
+    return;
+  }
+  const verifier = createVerifier();
+  storePkceVerifier(verifier);
+  const challenge = await challengeFor(verifier);
   const origin = encodeURIComponent(location.origin + APP_BASE);
-  location.href = `${WORKER_URL}/login?scope=${encodeURIComponent(scope)}&next=${encodeURIComponent(next)}&origin=${origin}`;
+  location.href = `${WORKER_URL}/login?code_challenge=${challenge}&scope=${encodeURIComponent(scope)}&next=${encodeURIComponent(next)}&origin=${origin}`;
 }
 
 /** Clear the session cookie on the Worker and return to the app. */
